@@ -1,0 +1,4 @@
+rocksdb
+zig-cache
+zig-out
+*~
