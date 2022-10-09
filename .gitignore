@@ -2,3 +2,6 @@ rocksdb
 zig-cache
 zig-out
 *~
+*.o
+*.dylib
+main
