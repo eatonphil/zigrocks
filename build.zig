@@ -12,6 +12,6 @@ pub fn build(b: *std.build.Builder) void {
         b.installFile("./rocksdb/librocksdb.7.8.dylib", "../librocksdb.7.8.dylib");
         exe.addRPath(".");
     }
-        
+
     exe.install();
 }
