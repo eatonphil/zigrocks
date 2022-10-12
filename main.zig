@@ -121,7 +121,7 @@ const Token = struct {
     };
 
     fn print(self: Token) void {
-        std.debug.print("{s}", .{self.source[self.start .. self.end]});
+        std.debug.print("{s}", .{self.source[self.start..self.end]});
     }
 
     fn debug(self: Token, msg: []const u8) void {
@@ -152,7 +152,7 @@ const Token = struct {
             i = i + 1;
         }
 
-        std.debug.print("s: {}, y: {}\n",.{lineStartIndex, lineEndIndex});
+        std.debug.print("s: {}, y: {}\n", .{ lineStartIndex, lineEndIndex });
         std.debug.print("{s}\nNear line {}, column {}.\n{s}", .{ msg, line + 1, column, source[lineStartIndex..lineEndIndex] });
         while (column - 1 > 0) {
             std.debug.print(" ", .{});
@@ -190,7 +190,7 @@ const Builtin = struct {
 };
 
 // These must be sorted by length of the name text, descending
-var BUILTINS = .{
+var BUILTINS = [_]Builtin{
     .{ .name = "SELECT", .kind = Token.Kind.select_keyword },
     .{ .name = "SELECT", .kind = Token.Kind.select_keyword },
     .{ .name = "CREATE", .kind = Token.Kind.create_keyword },
@@ -210,13 +210,16 @@ var BUILTINS = .{
 fn lexKeyword(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
     var longestLen: usize = 0;
     var kind = Token.Kind.select_keyword;
-    inline for (BUILTINS) |builtin| {
-        if (index + builtin.name.len < source.len and
-            longestLen == 0 and
-            mem.eql(u8, source[index .. index + builtin.name.len], builtin.name))
-        {
+    for (BUILTINS) |builtin| {
+        if (index + builtin.name.len >= source.len) {
+            continue;
+        }
+
+        if (mem.eql(u8, source[index .. index + builtin.name.len], builtin.name)) {
             longestLen = builtin.name.len;
             kind = builtin.kind;
+            // First match is the longest match
+            break;
         }
     }
 
@@ -460,7 +463,7 @@ const Parser = struct {
 
             if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
                 debug(tokens, i, "Expected identifier after this.\n");
-                return .{.val = null, .err = "Expected identifier."};
+                return .{ .val = null, .err = "Expected identifier." };
             }
 
             select.columns.append(tokens.items[i]) catch return .{ .val = null, .err = "Could not allocate for token." };
