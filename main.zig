@@ -14,7 +14,7 @@ const RocksDBError = error{
 const RocksDB = struct {
     db: *rdb.rocksdb_t,
 
-    pub fn open() struct { val: ?RocksDB, err: ?CError } {
+    fn open() struct { val: ?RocksDB, err: ?CError } {
         var options: ?*rdb.rocksdb_options_t = rdb.rocksdb_options_create();
         rdb.rocksdb_options_set_create_if_missing(options, 1);
         var err: ?CError = null;
@@ -25,11 +25,11 @@ const RocksDB = struct {
         return .{ .val = RocksDB{ .db = db.? }, .err = null };
     }
 
-    pub fn close(self: RocksDB) void {
+    fn close(self: RocksDB) void {
         rdb.rocksdb_close(self.db);
     }
 
-    pub fn set(self: RocksDB, key: [:0]const u8, value: [:0]const u8) ?CError {
+    fn set(self: RocksDB, key: [:0]const u8, value: [:0]const u8) ?CError {
         var writeOptions = rdb.rocksdb_writeoptions_create();
         var err: ?CError = null;
         rdb.rocksdb_put(self.db, writeOptions, @ptrCast([*c]const u8, key), key.len, @ptrCast([*c]const u8, value), value.len, &err);
@@ -39,7 +39,7 @@ const RocksDB = struct {
         }
     }
 
-    pub fn get(self: RocksDB, key: [:0]const u8) struct { val: [*c]const u8, err: ?CError } {
+    fn get(self: RocksDB, key: [:0]const u8) struct { val: [*c]const u8, err: ?CError } {
         var readOptions = rdb.rocksdb_readoptions_create();
         var valueLength: usize = 0;
         var err: ?CError = null;
@@ -120,6 +120,10 @@ const Token = struct {
         numeric,
     };
 
+    fn print(self: Token) void {
+        std.debug.print("{s}", .{self.source[self.start .. self.end]});
+    }
+
     fn debug(self: Token, msg: []const u8) void {
         var line: usize = 0;
         var column: usize = 0;
@@ -148,7 +152,8 @@ const Token = struct {
             i = i + 1;
         }
 
-        std.debug.print("{s}\nNear line {}, column {}.\n{s}", .{ msg, line + 1, column, source });
+        std.debug.print("s: {}, y: {}\n",.{lineStartIndex, lineEndIndex});
+        std.debug.print("{s}\nNear line {}, column {}.\n{s}", .{ msg, line + 1, column, source[lineStartIndex..lineEndIndex] });
         while (column - 1 > 0) {
             std.debug.print(" ", .{});
             column = column - 1;
@@ -157,12 +162,21 @@ const Token = struct {
     }
 };
 
+fn debug(tokens: ArrayList(Token), preferredIndex: usize, msg: []const u8) void {
+    var i = preferredIndex;
+    while (i >= tokens.items.len) {
+        i = i - 0;
+    }
+
+    tokens.items[i].debug(msg);
+}
+
 fn eatWhitespace(source: []const u8, index: usize) usize {
     var res = index;
-    while (source[index] == ' ' or
-        source[index] == '\n' or
-        source[index] == '\t' or
-        source[index] == '\r')
+    while (source[res] == ' ' or
+        source[res] == '\n' or
+        source[res] == '\t' or
+        source[res] == '\r')
     {
         res = res + 1;
     }
@@ -175,34 +189,32 @@ const Builtin = struct {
     kind: Token.Kind,
 };
 
-var BUILTINS = block: {
-    var builtins: [13]Builtin = undefined;
-    builtins[0] = .{ .name = "SELECT", .kind = Token.Kind.select_keyword };
-    builtins[1] = .{ .name = "CREATE", .kind = Token.Kind.create_keyword };
-    builtins[2] = .{ .name = "INSERT", .kind = Token.Kind.insert_keyword };
-    builtins[3] = .{ .name = "VALUES", .kind = Token.Kind.values_keyword };
-    builtins[4] = .{ .name = "WHERE", .kind = Token.Kind.where_keyword };
-    builtins[5] = .{ .name = "FALSE", .kind = Token.Kind.false_value };
-    builtins[6] = .{ .name = "FROM", .kind = Token.Kind.from_keyword };
-    builtins[7] = .{ .name = "INTO", .kind = Token.Kind.into_keyword };
-    builtins[8] = .{ .name = "TRUE", .kind = Token.Kind.true_value };
-    builtins[9] = .{ .name = "=", .kind = Token.Kind.equal_operator };
-    builtins[10] = .{ .name = "(", .kind = Token.Kind.left_paren_syntax };
-    builtins[11] = .{ .name = ")", .kind = Token.Kind.right_paren_syntax };
-    builtins[12] = .{ .name = ",", .kind = Token.Kind.comma_syntax };
-
-    break :block builtins;
+// These must be sorted by length of the name text, descending
+var BUILTINS = .{
+    .{ .name = "SELECT", .kind = Token.Kind.select_keyword },
+    .{ .name = "SELECT", .kind = Token.Kind.select_keyword },
+    .{ .name = "CREATE", .kind = Token.Kind.create_keyword },
+    .{ .name = "INSERT", .kind = Token.Kind.insert_keyword },
+    .{ .name = "VALUES", .kind = Token.Kind.values_keyword },
+    .{ .name = "WHERE", .kind = Token.Kind.where_keyword },
+    .{ .name = "FALSE", .kind = Token.Kind.false_value },
+    .{ .name = "FROM", .kind = Token.Kind.from_keyword },
+    .{ .name = "INTO", .kind = Token.Kind.into_keyword },
+    .{ .name = "TRUE", .kind = Token.Kind.true_value },
+    .{ .name = "=", .kind = Token.Kind.equal_operator },
+    .{ .name = "(", .kind = Token.Kind.left_paren_syntax },
+    .{ .name = ")", .kind = Token.Kind.right_paren_syntax },
+    .{ .name = ",", .kind = Token.Kind.comma_syntax },
 };
 
 fn lexKeyword(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
     var longestLen: usize = 0;
     var kind = Token.Kind.select_keyword;
-    for (BUILTINS) |builtin| {
-        if (index + builtin.name.len >= source.len or builtin.name.len < longestLen) {
-            continue;
-        }
-
-        if (mem.eql(u8, source[index .. index + builtin.name.len], builtin.name)) {
+    inline for (BUILTINS) |builtin| {
+        if (index + builtin.name.len < source.len and
+            longestLen == 0 and
+            mem.eql(u8, source[index .. index + builtin.name.len], builtin.name))
+        {
             longestLen = builtin.name.len;
             kind = builtin.kind;
         }
@@ -228,7 +240,7 @@ fn lexNumeric(source: []const u8, index: usize) struct { nextPosition: usize, to
         return .{ .nextPosition = 0, .token = null };
     }
 
-    return .{ .nextPosition = end + 1, .token = Token{ .source=source, .start = start, .end = end, .kind = Token.Kind.numeric } };
+    return .{ .nextPosition = end + 1, .token = Token{ .source = source, .start = start, .end = end, .kind = Token.Kind.numeric } };
 }
 
 fn lexIdentifier(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
@@ -247,7 +259,7 @@ fn lexIdentifier(source: []const u8, index: usize) struct { nextPosition: usize,
         return .{ .nextPosition = 0, .token = null };
     }
 
-    return .{ .nextPosition = end + 1, .token = Token{.source=source, .start = start, .end = end, .kind = Token.Kind.identifier } };
+    return .{ .nextPosition = end + 1, .token = Token{ .source = source, .start = start, .end = end, .kind = Token.Kind.identifier } };
 }
 
 fn lex(source: []const u8, tokens: *ArrayList(Token)) ?Error {
@@ -277,7 +289,7 @@ fn lex(source: []const u8, tokens: *ArrayList(Token)) ?Error {
         }
 
         if (tokens.items.len > 0) {
-            tokens.items[tokens.items.len - 1].debug("Last good token.\n");
+            debug(tokens.*, tokens.items.len - 1, "Last good token.\n");
         }
         return "Bad token";
     }
@@ -306,12 +318,30 @@ const SelectAST = struct {
     columns: ArrayList(Token),
     from: Token,
     where: *ExpressionAST,
+
+    fn print(self: SelectAST) void {
+        std.debug.print("SELECT\n", .{});
+        for (self.columns.items) |column, i| {
+            std.debug.print("  ", .{});
+            column.print();
+            if (i < self.columns.items.len - 1) {
+                std.debug.print(",", .{});
+            }
+            std.debug.print("\n", .{});
+        }
+        std.debug.print("FROM\n  ", .{});
+        self.from.print();
+    }
 };
 
 const InsertAST = struct {
     table: Token,
     columns: ArrayList(Token),
     values: ArrayList(ExpressionAST),
+
+    fn print(self: InsertAST) void {
+        _ = self;
+    }
 };
 
 const CreateColumnAST = struct {
@@ -329,15 +359,27 @@ const AST = struct {
     insert: *InsertAST,
     create: *CreateAST,
     kind: Token.Kind,
+
+    fn print(self: AST) void {
+        if (self.kind == .select_keyword) {
+            self.select.print();
+        } else if (self.kind == .insert_keyword) {
+            self.insert.print();
+        } else if (self.kind == .insert_keyword) {
+            self.insert.print();
+        } else {
+            std.debug.print("[UNKNOWN!]", .{});
+        }
+    }
 };
 
 const Parser = struct {
     allocator: mem.Allocator,
 
-    pub fn init(allocator: mem.Allocator) Parser {
-        return Parser{.allocator=allocator};
+    fn init(allocator: mem.Allocator) Parser {
+        return Parser{ .allocator = allocator };
     }
-    
+
     fn expectTokenKind(tokens: ArrayList(Token), index: usize, kind: Token.Kind) bool {
         if (index >= tokens.items.len) {
             return false;
@@ -356,13 +398,40 @@ const Parser = struct {
         };
 
         if (expectTokenKind(tokens, i, Token.Kind.numeric) or
-            expectTokenKind(tokens, i, Token.Kind.identifier)) {
+            expectTokenKind(tokens, i, Token.Kind.identifier))
+        {
             e.kind = ExpressionAST.Kind.literal;
-            e.literal = self.allocator.create(Token) catch return .{.val = null, .nextPosition = 0, .err = "Could not allocate for token."};
+            e.literal = self.allocator.create(Token) catch return .{ .val = null, .nextPosition = 0, .err = "Could not allocate for token." };
             e.literal.* = tokens.items[i];
+            i = i + 1;
+        } else {
+            return .{ .val = null, .nextPosition = 0, .err = "No expression" };
         }
 
-        return .{.val = e, .nextPosition = i, .err = null};
+        if (expectTokenKind(tokens, i, Token.Kind.equal_operator)) {
+            var oldE = e;
+            e = ExpressionAST{
+                .kind = ExpressionAST.Kind.binary_operation,
+                .literal = undefined,
+                .binary_operation = undefined,
+            };
+            e.binary_operation = self.allocator.create(BinaryOperationAST) catch return .{ .val = null, .nextPosition = 0, .err = "Could not allocate for BinaryOperationAST." };
+            e.binary_operation.* = BinaryOperationAST{
+                .operator = tokens.items[i],
+                .left = oldE,
+                .right = undefined,
+            };
+
+            var rightRes = self.parseExpression(tokens, i + 1);
+            if (rightRes.err != null) {
+                return .{ .val = null, .nextPosition = 0, .err = rightRes.err };
+            }
+
+            e.binary_operation.right = rightRes.val.?;
+            i = rightRes.nextPosition;
+        }
+
+        return .{ .val = e, .nextPosition = i, .err = null };
     }
 
     fn parseSelect(self: Parser, tokens: ArrayList(Token)) struct { val: ?AST, err: ?Error } {
@@ -382,52 +451,66 @@ const Parser = struct {
         while (!expectTokenKind(tokens, i, Token.Kind.from_keyword)) {
             if (select.columns.items.len > 0) {
                 if (!expectTokenKind(tokens, i, Token.Kind.comma_syntax)) {
-                    tokens.items[i-1].debug("Expected comma after this.\n");
-                    return .{.val = null, .err = "Expected comma."};
+                    debug(tokens, i, "Expected comma.\n");
+                    return .{ .val = null, .err = "Expected comma." };
                 }
 
                 i = i + 1;
             }
 
             if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
-                select.columns.append(tokens.items[i]) catch return .{.val = null, .err = "Could not allocate for token."};
-                tokens.items[i-1].debug("Expected identifier after this.\n");
+                debug(tokens, i, "Expected identifier after this.\n");
+                return .{.val = null, .err = "Expected identifier."};
             }
+
+            select.columns.append(tokens.items[i]) catch return .{ .val = null, .err = "Could not allocate for token." };
             i = i + 1;
         }
 
         if (!expectTokenKind(tokens, i, Token.Kind.from_keyword)) {
-            tokens.items[i-1].debug("Expected FROM keyword after this.\n");
+            debug(tokens, i, "Expected FROM keyword after this.\n");
+            return .{ .val = null, .err = "Expected FROM keyword" };
+        }
+        i = i + 1;
+
+        if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
+            debug(tokens, i, "Expected FROM  after this.\n");
             return .{ .val = null, .err = "Expected FROM keyword" };
         }
         select.from = tokens.items[i];
         i = i + 1;
 
         if (expectTokenKind(tokens, i, Token.Kind.where_keyword)) {
+            // i + 1, skip past the where
             var res = self.parseExpression(tokens, i + 1);
             if (res.err != null) {
-                return .{.val = null, .err = res.err};
+                return .{ .val = null, .err = res.err };
             }
 
-            select.where = self.allocator.create(ExpressionAST) catch return .{.val = null, .err = "Could not allocate ExpressionAST"};
+            select.where = self.allocator.create(ExpressionAST) catch return .{ .val = null, .err = "Could not allocate ExpressionAST" };
             select.where.* = res.val.?;
             i = res.nextPosition;
+        } else {
+            std.debug.print("{}\n", .{tokens.items[i]});
         }
 
-        var s = self.allocator.create(SelectAST) catch return .{.val = null, .err = "Could not allocate SelectAST"};
+        var s = self.allocator.create(SelectAST) catch return .{ .val = null, .err = "Could not allocate SelectAST" };
         s.* = select;
 
-        return .{
-            .val=AST{
-                .kind = Token.Kind.select_keyword,
-                .select = s,
-                .create = undefined,
-                .insert = undefined,
-            },
-            .err = null};
+        if (i < tokens.items.len) {
+            debug(tokens, i, "Unexpected token.");
+            return .{ .val = null, .err = "Did not complete parsing" };
+        }
+
+        return .{ .val = AST{
+            .kind = Token.Kind.select_keyword,
+            .select = s,
+            .create = undefined,
+            .insert = undefined,
+        }, .err = null };
     }
 
-    fn parseCreate(_:Parser, _: ArrayList(Token)) struct { val: ?AST, err: ?Error } {
+    fn parseCreate(_: Parser, _: ArrayList(Token)) struct { val: ?AST, err: ?Error } {
         return .{ .val = null, .err = "Expected CREATE keyword" };
     }
 
@@ -435,20 +518,20 @@ const Parser = struct {
         return .{ .val = null, .err = "Expected INSERT keyword" };
     }
 
-    pub fn parse(self: Parser, tokens: ArrayList(Token)) struct { val: ?AST, err: ?Error } {
+    fn parse(self: Parser, tokens: ArrayList(Token)) struct { val: ?AST, err: ?Error } {
         if (expectTokenKind(tokens, 0, Token.Kind.select_keyword)) {
             var res = self.parseSelect(tokens);
-            return .{.val = res.val, .err = res.err};
+            return .{ .val = res.val, .err = res.err };
         }
 
         if (expectTokenKind(tokens, 0, Token.Kind.create_keyword)) {
             var res = self.parseCreate(tokens);
-            return .{.val = res.val, .err = res.err};
+            return .{ .val = res.val, .err = res.err };
         }
 
         if (expectTokenKind(tokens, 0, Token.Kind.insert_keyword)) {
             var res = self.parseInsert(tokens);
-            return .{.val = res.val, .err = res.err};
+            return .{ .val = res.val, .err = res.err };
         }
 
         return .{ .val = null, .err = "Unknown statement" };
@@ -494,6 +577,10 @@ pub fn main() !void {
     if (parseRes.err) |err| {
         std.debug.print("Failed to parse: {s}", .{err});
         return;
+    }
+
+    if (parseRes.val) |ast| {
+        ast.print();
     }
 
     const openRes = RocksDB.open();

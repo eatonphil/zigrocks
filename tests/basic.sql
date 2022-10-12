@@ -1,1 +1,5 @@
-SELECT * FROM main WHERE x = 1
+SELECT
+  a, b
+FROM
+  main
+WHERE x = 1
