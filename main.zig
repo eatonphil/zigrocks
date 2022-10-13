@@ -136,15 +136,15 @@ const Token = struct {
                 line = line + 1;
                 column = 0;
                 lineStartIndex = i;
-                lineEndIndex = i;
             } else {
                 column = column + 1;
             }
 
             if (i == self.start) {
-                while (source[i] != '\n') {
+                // Find the end of the line
+                lineEndIndex = i;
+                while (source[lineEndIndex] != '\n') {
                     lineEndIndex = lineEndIndex + 1;
-                    i = i + 1;
                 }
                 break;
             }
@@ -152,8 +152,7 @@ const Token = struct {
             i = i + 1;
         }
 
-        std.debug.print("s: {}, y: {}\n", .{ lineStartIndex, lineEndIndex });
-        std.debug.print("{s}\nNear line {}, column {}.\n{s}", .{ msg, line + 1, column, source[lineStartIndex..lineEndIndex] });
+        std.debug.print("{s}\nNear line {}, column {}.\n{s}\n", .{ msg, line + 1, column, source[lineStartIndex..lineEndIndex] });
         while (column - 1 > 0) {
             std.debug.print(" ", .{});
             column = column - 1;
@@ -179,6 +178,9 @@ fn eatWhitespace(source: []const u8, index: usize) usize {
         source[res] == '\r')
     {
         res = res + 1;
+        if (res == source.len) {
+            break;
+        }
     }
 
     return res;
@@ -191,9 +193,8 @@ const Builtin = struct {
 
 // These must be sorted by length of the name text, descending
 var BUILTINS = [_]Builtin{
+    .{ .name = "CREATE TABLE", .kind = Token.Kind.create_keyword },
     .{ .name = "SELECT", .kind = Token.Kind.select_keyword },
-    .{ .name = "SELECT", .kind = Token.Kind.select_keyword },
-    .{ .name = "CREATE", .kind = Token.Kind.create_keyword },
     .{ .name = "INSERT", .kind = Token.Kind.insert_keyword },
     .{ .name = "VALUES", .kind = Token.Kind.values_keyword },
     .{ .name = "WHERE", .kind = Token.Kind.where_keyword },
@@ -201,11 +202,16 @@ var BUILTINS = [_]Builtin{
     .{ .name = "FROM", .kind = Token.Kind.from_keyword },
     .{ .name = "INTO", .kind = Token.Kind.into_keyword },
     .{ .name = "TRUE", .kind = Token.Kind.true_value },
+    .{ .name = "INT", .kind = Token.Kind.true_value },
     .{ .name = "=", .kind = Token.Kind.equal_operator },
     .{ .name = "(", .kind = Token.Kind.left_paren_syntax },
     .{ .name = ")", .kind = Token.Kind.right_paren_syntax },
     .{ .name = ",", .kind = Token.Kind.comma_syntax },
 };
+
+comptime {
+    std.debug.assert(BUILTINS.len == @typeInfo(Token.Kind).Enum.fields.len - 2);
+}
 
 fn lexKeyword(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
     var longestLen: usize = 0;
@@ -227,7 +233,7 @@ fn lexKeyword(source: []const u8, index: usize) struct { nextPosition: usize, to
         return .{ .nextPosition = 0, .token = null };
     }
 
-    return .{ .nextPosition = index + longestLen + 1, .token = Token{ .source = source, .start = index, .end = index + longestLen, .kind = kind } };
+    return .{ .nextPosition = index + longestLen, .token = Token{ .source = source, .start = index, .end = index + longestLen, .kind = kind } };
 }
 
 fn lexNumeric(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
@@ -243,7 +249,7 @@ fn lexNumeric(source: []const u8, index: usize) struct { nextPosition: usize, to
         return .{ .nextPosition = 0, .token = null };
     }
 
-    return .{ .nextPosition = end + 1, .token = Token{ .source = source, .start = start, .end = end, .kind = Token.Kind.numeric } };
+    return .{ .nextPosition = end, .token = Token{ .source = source, .start = start, .end = end, .kind = Token.Kind.numeric } };
 }
 
 fn lexIdentifier(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
@@ -262,31 +268,34 @@ fn lexIdentifier(source: []const u8, index: usize) struct { nextPosition: usize,
         return .{ .nextPosition = 0, .token = null };
     }
 
-    return .{ .nextPosition = end + 1, .token = Token{ .source = source, .start = start, .end = end, .kind = Token.Kind.identifier } };
+    return .{ .nextPosition = end, .token = Token{ .source = source, .start = start, .end = end, .kind = Token.Kind.identifier } };
 }
 
 fn lex(source: []const u8, tokens: *ArrayList(Token)) ?Error {
     var i: usize = 0;
-    while (i < source.len) {
+    while (true) {
         i = eatWhitespace(source, i);
+        if (i >= source.len) {
+            break;
+        }
 
         const keywordRes = lexKeyword(source, i);
         if (keywordRes.token) |token| {
-            tokens.append(token) catch return "Failed to allocate";
+            tokens.append(token) catch return "Failed to allocate space for keyword token";
             i = keywordRes.nextPosition;
             continue;
         }
 
         const numericRes = lexNumeric(source, i);
         if (numericRes.token) |token| {
-            tokens.append(token) catch return "Failed to allocate";
+            tokens.append(token) catch return "Failed to allocate space for numeric token";
             i = numericRes.nextPosition;
             continue;
         }
 
         const identifierRes = lexIdentifier(source, i);
         if (identifierRes.token) |token| {
-            tokens.append(token) catch return "Failed to allocate";
+            tokens.append(token) catch return "Failed to allocate space for identifier token";
             i = identifierRes.nextPosition;
             continue;
         }
@@ -304,6 +313,14 @@ const BinaryOperationAST = struct {
     operator: Token,
     left: ExpressionAST,
     right: ExpressionAST,
+
+    fn print(self: BinaryOperationAST) void {
+        self.left.print();
+        std.debug.print(" ", .{});
+        self.operator.print();
+        std.debug.print(" ", .{});
+        self.right.print();
+    }
 };
 
 const ExpressionAST = struct {
@@ -315,12 +332,20 @@ const ExpressionAST = struct {
         literal,
         binary_operation,
     };
+
+    fn print(self: ExpressionAST) void {
+        if (self.kind == .literal) {
+            self.literal.print();
+        } else {
+            self.binary_operation.print();
+        }
+    }
 };
 
 const SelectAST = struct {
     columns: ArrayList(Token),
     from: Token,
-    where: *ExpressionAST,
+    where: ?*ExpressionAST,
 
     fn print(self: SelectAST) void {
         std.debug.print("SELECT\n", .{});
@@ -334,6 +359,13 @@ const SelectAST = struct {
         }
         std.debug.print("FROM\n  ", .{});
         self.from.print();
+
+        if (self.where != null) {
+            std.debug.print("\nWHERE\n  ", .{});
+            self.where.?.print();
+        }
+
+        std.debug.print("\n", .{});
     }
 };
 
@@ -491,7 +523,7 @@ const Parser = struct {
             }
 
             select.where = self.allocator.create(ExpressionAST) catch return .{ .val = null, .err = "Could not allocate ExpressionAST" };
-            select.where.* = res.val.?;
+            select.where.?.* = res.val.?;
             i = res.nextPosition;
         } else {
             std.debug.print("{}\n", .{tokens.items[i]});

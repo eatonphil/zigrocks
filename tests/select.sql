@@ -1,5 +1,5 @@
 SELECT
-  a, b
+  a,b
 FROM
   main
 WHERE x = 1
