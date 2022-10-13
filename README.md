@@ -1,3 +1,5 @@
+# zigrocks: a basic SQL database in Zig, with storage via RocksDB
+
 Build:
 
 ```bash
@@ -6,12 +8,23 @@ $ ( cd rocksdb && make shared_lib -j8 )
 $ zig build
 ```
 
-And run!
+And run! (Currently, it only parses and reprints the parsed code.)
 
 ```bash
-$ ./main set a 12
-$ ./main get a
-12
+$ cat tests/select.sql
+SELECT
+  a,b
+FROM
+  main
+WHERE x = 1
+$ ./main tests/select.sql
+SELECT
+  a,
+  b
+FROM
+  main
+WHERE
+  x = 1
 ```
 
 References:
