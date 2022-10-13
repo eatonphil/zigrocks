@@ -1,1 +1,4 @@
-CREATE TABLE x()
+CREATE TABLE x(
+  name TEXT,
+  age INT
+)

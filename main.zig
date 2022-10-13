@@ -103,12 +103,7 @@ const Token = struct {
         insert_keyword,
         values_keyword,
         from_keyword,
-        into_keyword,
         where_keyword,
-        int_keyword,
-
-        true_value,
-        false_value,
 
         equal_operator,
 
@@ -194,15 +189,11 @@ const Builtin = struct {
 // These must be sorted by length of the name text, descending
 var BUILTINS = [_]Builtin{
     .{ .name = "CREATE TABLE", .kind = Token.Kind.create_keyword },
+    .{ .name = "INSERT INTO", .kind = Token.Kind.insert_keyword },
     .{ .name = "SELECT", .kind = Token.Kind.select_keyword },
-    .{ .name = "INSERT", .kind = Token.Kind.insert_keyword },
     .{ .name = "VALUES", .kind = Token.Kind.values_keyword },
     .{ .name = "WHERE", .kind = Token.Kind.where_keyword },
-    .{ .name = "FALSE", .kind = Token.Kind.false_value },
     .{ .name = "FROM", .kind = Token.Kind.from_keyword },
-    .{ .name = "INTO", .kind = Token.Kind.into_keyword },
-    .{ .name = "TRUE", .kind = Token.Kind.true_value },
-    .{ .name = "INT", .kind = Token.Kind.true_value },
     .{ .name = "=", .kind = Token.Kind.equal_operator },
     .{ .name = "(", .kind = Token.Kind.left_paren_syntax },
     .{ .name = ")", .kind = Token.Kind.right_paren_syntax },
@@ -387,6 +378,23 @@ const CreateColumnAST = struct {
 const CreateAST = struct {
     table: Token,
     columns: ArrayList(CreateColumnAST),
+
+    fn print(self: CreateAST) void {
+        std.debug.print("CREATE TABLE ", .{});
+        self.table.print();
+        std.debug.print(" (\n", .{});
+        for (self.columns.items) |column, i| {
+            std.debug.print("  ", .{});
+            column.name.print();
+            std.debug.print(" ", .{});
+            column.kind.print();
+            if (i < self.columns.items.len - 1) {
+                std.debug.print(",", .{});
+            }
+            std.debug.print("\n", .{});
+        }
+        std.debug.print(")\n", .{});
+    }
 };
 
 const AST = struct {
@@ -400,8 +408,8 @@ const AST = struct {
             self.select.print();
         } else if (self.kind == .insert_keyword) {
             self.insert.print();
-        } else if (self.kind == .insert_keyword) {
-            self.insert.print();
+        } else if (self.kind == .create_keyword) {
+            self.create.print();
         } else {
             std.debug.print("[UNKNOWN!]", .{});
         }
@@ -476,11 +484,8 @@ const Parser = struct {
         }
         i = i + 1;
 
-        var select = SelectAST{
-            .columns = ArrayList(Token).init(self.allocator),
-            .from = undefined,
-            .where = undefined,
-        };
+        var select = self.allocator.create(SelectAST) catch return .{ .val = null, .err = "Could not allocate SelectAST" };
+        select.columns = ArrayList(Token).init(self.allocator);
 
         // Parse columns
         while (!expectTokenKind(tokens, i, Token.Kind.from_keyword)) {
@@ -509,7 +514,7 @@ const Parser = struct {
         i = i + 1;
 
         if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
-            debug(tokens, i, "Expected FROM  after this.\n");
+            debug(tokens, i, "Expected FROM table name after this.\n");
             return .{ .val = null, .err = "Expected FROM keyword" };
         }
         select.from = tokens.items[i];
@@ -529,24 +534,86 @@ const Parser = struct {
             std.debug.print("{}\n", .{tokens.items[i]});
         }
 
-        var s = self.allocator.create(SelectAST) catch return .{ .val = null, .err = "Could not allocate SelectAST" };
-        s.* = select;
-
         if (i < tokens.items.len) {
             debug(tokens, i, "Unexpected token.");
-            return .{ .val = null, .err = "Did not complete parsing" };
+            return .{ .val = null, .err = "Did not complete parsing SELECT" };
         }
 
         return .{ .val = AST{
             .kind = Token.Kind.select_keyword,
-            .select = s,
+            .select = select,
             .create = undefined,
             .insert = undefined,
         }, .err = null };
     }
 
-    fn parseCreate(_: Parser, _: ArrayList(Token)) struct { val: ?AST, err: ?Error } {
-        return .{ .val = null, .err = "Expected CREATE keyword" };
+    fn parseCreate(self: Parser, tokens: ArrayList(Token)) struct { val: ?AST, err: ?Error } {
+        var i: usize = 0;
+        if (!expectTokenKind(tokens, i, Token.Kind.create_keyword)) {
+            return .{ .val = null, .err = "Expected CREATE TABLE keyword" };
+        }
+        i = i + 1;
+
+        if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
+            debug(tokens, i, "Expected table name after CREATE TABLE keyword.\n");
+            return .{ .val = null, .err = "Expected CREATE TABLE name" };
+        }
+
+        var create = self.allocator.create(CreateAST) catch return .{ .val = null, .err = "Could not allocate CreateAST" };
+        create.columns = ArrayList(CreateColumnAST).init(self.allocator);
+        create.table = tokens.items[i];
+        i = i + 1;
+
+        if (!expectTokenKind(tokens, i, Token.Kind.left_paren_syntax)) {
+            debug(tokens, i, "Expected opening paren after CREATE TABLE name.\n");
+            return .{ .val = null, .err = "Expected opening paren" };
+        }
+        i = i + 1;
+
+        while (!expectTokenKind(tokens, i, Token.Kind.right_paren_syntax)) {
+            if (create.columns.items.len > 0) {
+                if (!expectTokenKind(tokens, i, Token.Kind.comma_syntax)) {
+                    debug(tokens, i, "Expected comma.\n");
+                    return .{ .val = null, .err = "Expected comma." };
+                }
+
+                i = i + 1;
+            }
+
+            var column = CreateColumnAST{ .name = undefined, .kind = undefined };
+            if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
+                debug(tokens, i, "Expected column name after comma.\n");
+                return .{ .val = null, .err = "Expected identifier." };
+            }
+
+            column.name = tokens.items[i];
+            i = i + 1;
+
+            if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
+                debug(tokens, i, "Expected column type after column name.\n");
+                return .{ .val = null, .err = "Expected identifier." };
+            }
+
+            column.kind = tokens.items[i];
+            i = i + 1;
+
+            create.columns.append(column) catch return .{ .val = null, .err = "Could not allocate for column." };
+        }
+
+        // Skip past final paren.
+        i = i + 1;
+
+        if (i < tokens.items.len) {
+            debug(tokens, i, "Unexpected token.");
+            return .{ .val = null, .err = "Did not complete parsing CREATE TABLE" };
+        }
+
+        return .{ .val = AST{
+            .kind = Token.Kind.create_keyword,
+            .select = undefined,
+            .create = create,
+            .insert = undefined,
+        }, .err = null };
     }
 
     fn parseInsert(_: Parser, _: ArrayList(Token)) struct { val: ?AST, err: ?Error } {
@@ -601,6 +668,12 @@ pub fn main() !void {
         std.debug.print("Failed to lex: {s}", .{err});
         return;
     }
+
+    // for (tokens.items) |token| {
+    //     std.debug.print("Token: ", .{});
+    //     token.print();
+    //     std.debug.print("\n", .{});
+    // }
 
     if (tokens.items.len == 0) {
         std.debug.print("Program is empty", .{});
