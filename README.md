@@ -17,6 +17,7 @@ SELECT
 FROM
   main
 WHERE x = 1
+
 $ ./main tests/select.sql
 SELECT
   a,

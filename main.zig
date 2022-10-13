@@ -366,7 +366,16 @@ const InsertAST = struct {
     values: ArrayList(ExpressionAST),
 
     fn print(self: InsertAST) void {
-        _ = self;
+        std.debug.print("INSERT INTO ", .{});
+        self.table.print();
+        std.debug.print(" VALUES (", .{});
+        for (self.values.items) |value, i| {
+            value.print();
+            if (i < self.values.items.len - 1) {
+                std.debug.print(", ", .{});
+            }
+        }
+        std.debug.print(")\n", .{});
     }
 };
 
@@ -616,8 +625,68 @@ const Parser = struct {
         }, .err = null };
     }
 
-    fn parseInsert(_: Parser, _: ArrayList(Token)) struct { val: ?AST, err: ?Error } {
-        return .{ .val = null, .err = "Expected INSERT keyword" };
+    fn parseInsert(self: Parser, tokens: ArrayList(Token)) struct { val: ?AST, err: ?Error } {
+        var i: usize = 0;
+        if (!expectTokenKind(tokens, i, Token.Kind.insert_keyword)) {
+            return .{ .val = null, .err = "Expected INSERT INTO keyword" };
+        }
+        i = i + 1;
+
+        if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
+            debug(tokens, i, "Expected table name after INSERT INTO keyword.\n");
+            return .{ .val = null, .err = "Expected INSERT INTO table name" };
+        }
+
+        var insert = self.allocator.create(InsertAST) catch return .{ .val = null, .err = "Could not allocate InsertAST" };
+        insert.values = ArrayList(ExpressionAST).init(self.allocator);
+        insert.table = tokens.items[i];
+        i = i + 1;
+
+        if (!expectTokenKind(tokens, i, Token.Kind.values_keyword)) {
+            debug(tokens, i, "Expected VALUES keyword.\n");
+            return .{ .val = null, .err = "Expected VALUES keyword" };
+        }
+        i = i + 1;
+
+        if (!expectTokenKind(tokens, i, Token.Kind.left_paren_syntax)) {
+            debug(tokens, i, "Expected opening paren after CREATE TABLE name.\n");
+            return .{ .val = null, .err = "Expected opening paren" };
+        }
+        i = i + 1;
+
+        while (!expectTokenKind(tokens, i, Token.Kind.right_paren_syntax)) {
+            if (insert.values.items.len > 0) {
+                if (!expectTokenKind(tokens, i, Token.Kind.comma_syntax)) {
+                    debug(tokens, i, "Expected comma.\n");
+                    return .{ .val = null, .err = "Expected comma." };
+                }
+
+                i = i + 1;
+            }
+
+            var expressionRes = self.parseExpression(tokens, i);
+            if (expressionRes.err != null) {
+                return .{ .val = null, .err = expressionRes.err };
+            }
+
+            insert.values.append(expressionRes.val.?) catch return .{ .val = null, .err = "Could not allocate for expression." };
+            i = expressionRes.nextPosition;
+        }
+
+        // Skip past final paren.
+        i = i + 1;
+
+        if (i < tokens.items.len) {
+            debug(tokens, i, "Unexpected token.");
+            return .{ .val = null, .err = "Did not complete parsing INSERT INTO" };
+        }
+
+        return .{ .val = AST{
+            .kind = Token.Kind.insert_keyword,
+            .select = undefined,
+            .create = undefined,
+            .insert = insert,
+        }, .err = null };
     }
 
     fn parse(self: Parser, tokens: ArrayList(Token)) struct { val: ?AST, err: ?Error } {
