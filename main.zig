@@ -99,7 +99,7 @@ const Token = struct {
 
     const Kind = enum {
         select_keyword,
-        create_keyword,
+        create_table_keyword,
         insert_keyword,
         values_keyword,
         from_keyword,
@@ -113,6 +113,7 @@ const Token = struct {
 
         identifier,
         numeric,
+        string,
     };
 
     fn print(self: Token) void {
@@ -188,7 +189,7 @@ const Builtin = struct {
 
 // These must be sorted by length of the name text, descending
 var BUILTINS = [_]Builtin{
-    .{ .name = "CREATE TABLE", .kind = Token.Kind.create_keyword },
+    .{ .name = "CREATE TABLE", .kind = Token.Kind.create_table_keyword },
     .{ .name = "INSERT INTO", .kind = Token.Kind.insert_keyword },
     .{ .name = "SELECT", .kind = Token.Kind.select_keyword },
     .{ .name = "VALUES", .kind = Token.Kind.values_keyword },
@@ -200,9 +201,9 @@ var BUILTINS = [_]Builtin{
     .{ .name = ",", .kind = Token.Kind.comma_syntax },
 };
 
-comptime {
-    std.debug.assert(BUILTINS.len == @typeInfo(Token.Kind).Enum.fields.len - 2);
-}
+// comptime {
+//     std.debug.assert(BUILTINS.len == @typeInfo(Token.Kind).Enum.fields.len - 3);
+// }
 
 fn lexKeyword(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
     var longestLen: usize = 0;
@@ -232,6 +233,27 @@ fn lexNumeric(source: []const u8, index: usize) struct { nextPosition: usize, to
     var end = index;
     var i = index;
     while (source[i] >= '0' and source[i] <= '9') {
+        end = end + 1;
+        i = i + 1;
+    }
+
+    if (start == end) {
+        return .{ .nextPosition = 0, .token = null };
+    }
+
+    return .{ .nextPosition = end, .token = Token{ .source = source, .start = start, .end = end, .kind = Token.Kind.numeric } };
+}
+
+fn lexString(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
+    var i = index;
+    if (source[i] != '\'') {
+        return .{ .nextPosition = 0, .token = null };
+    }
+    i = i + 1;
+
+    var start = i;
+    var end = i;
+    while (source[i] != '\'') {
         end = end + 1;
         i = i + 1;
     }
@@ -281,6 +303,13 @@ fn lex(source: []const u8, tokens: *ArrayList(Token)) ?Error {
         if (numericRes.token) |token| {
             tokens.append(token) catch return "Failed to allocate space for numeric token";
             i = numericRes.nextPosition;
+            continue;
+        }
+
+        const stringRes = lexString(source, i);
+        if (stringRes.token) |token| {
+            tokens.append(token) catch return "Failed to allocate space for string token";
+            i = stringRes.nextPosition;
             continue;
         }
 
@@ -379,16 +408,16 @@ const InsertAST = struct {
     }
 };
 
-const CreateColumnAST = struct {
+const CreateTableColumnAST = struct {
     name: Token,
     kind: Token,
 };
 
-const CreateAST = struct {
+const CreateTableAST = struct {
     table: Token,
-    columns: ArrayList(CreateColumnAST),
+    columns: ArrayList(CreateTableColumnAST),
 
-    fn print(self: CreateAST) void {
+    fn print(self: CreateTableAST) void {
         std.debug.print("CREATE TABLE ", .{});
         self.table.print();
         std.debug.print(" (\n", .{});
@@ -409,7 +438,7 @@ const CreateAST = struct {
 const AST = struct {
     select: *SelectAST,
     insert: *InsertAST,
-    create: *CreateAST,
+    create_table: *CreateTableAST,
     kind: Token.Kind,
 
     fn print(self: AST) void {
@@ -417,10 +446,10 @@ const AST = struct {
             self.select.print();
         } else if (self.kind == .insert_keyword) {
             self.insert.print();
-        } else if (self.kind == .create_keyword) {
-            self.create.print();
+        } else if (self.kind == .create_table_keyword) {
+            self.create_table.print();
         } else {
-            std.debug.print("[UNKNOWN!]", .{});
+            std.debug.print("Cannot print unknown statement", .{});
         }
     }
 };
@@ -551,14 +580,14 @@ const Parser = struct {
         return .{ .val = AST{
             .kind = Token.Kind.select_keyword,
             .select = select,
-            .create = undefined,
+            .create_table = undefined,
             .insert = undefined,
         }, .err = null };
     }
 
-    fn parseCreate(self: Parser, tokens: ArrayList(Token)) struct { val: ?AST, err: ?Error } {
+    fn parseCreateTable(self: Parser, tokens: ArrayList(Token)) struct { val: ?AST, err: ?Error } {
         var i: usize = 0;
-        if (!expectTokenKind(tokens, i, Token.Kind.create_keyword)) {
+        if (!expectTokenKind(tokens, i, Token.Kind.create_table_keyword)) {
             return .{ .val = null, .err = "Expected CREATE TABLE keyword" };
         }
         i = i + 1;
@@ -568,9 +597,9 @@ const Parser = struct {
             return .{ .val = null, .err = "Expected CREATE TABLE name" };
         }
 
-        var create = self.allocator.create(CreateAST) catch return .{ .val = null, .err = "Could not allocate CreateAST" };
-        create.columns = ArrayList(CreateColumnAST).init(self.allocator);
-        create.table = tokens.items[i];
+        var create_table = self.allocator.create(CreateTableAST) catch return .{ .val = null, .err = "Could not allocate CreateTableAST" };
+        create_table.columns = ArrayList(CreateTableColumnAST).init(self.allocator);
+        create_table.table = tokens.items[i];
         i = i + 1;
 
         if (!expectTokenKind(tokens, i, Token.Kind.left_paren_syntax)) {
@@ -580,7 +609,7 @@ const Parser = struct {
         i = i + 1;
 
         while (!expectTokenKind(tokens, i, Token.Kind.right_paren_syntax)) {
-            if (create.columns.items.len > 0) {
+            if (create_table.columns.items.len > 0) {
                 if (!expectTokenKind(tokens, i, Token.Kind.comma_syntax)) {
                     debug(tokens, i, "Expected comma.\n");
                     return .{ .val = null, .err = "Expected comma." };
@@ -589,7 +618,7 @@ const Parser = struct {
                 i = i + 1;
             }
 
-            var column = CreateColumnAST{ .name = undefined, .kind = undefined };
+            var column = CreateTableColumnAST{ .name = undefined, .kind = undefined };
             if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
                 debug(tokens, i, "Expected column name after comma.\n");
                 return .{ .val = null, .err = "Expected identifier." };
@@ -606,7 +635,7 @@ const Parser = struct {
             column.kind = tokens.items[i];
             i = i + 1;
 
-            create.columns.append(column) catch return .{ .val = null, .err = "Could not allocate for column." };
+            create_table.columns.append(column) catch return .{ .val = null, .err = "Could not allocate for column." };
         }
 
         // Skip past final paren.
@@ -618,9 +647,9 @@ const Parser = struct {
         }
 
         return .{ .val = AST{
-            .kind = Token.Kind.create_keyword,
+            .kind = Token.Kind.create_table_keyword,
             .select = undefined,
-            .create = create,
+            .create_table = create_table,
             .insert = undefined,
         }, .err = null };
     }
@@ -684,7 +713,7 @@ const Parser = struct {
         return .{ .val = AST{
             .kind = Token.Kind.insert_keyword,
             .select = undefined,
-            .create = undefined,
+            .create_table = undefined,
             .insert = insert,
         }, .err = null };
     }
@@ -695,8 +724,8 @@ const Parser = struct {
             return .{ .val = res.val, .err = res.err };
         }
 
-        if (expectTokenKind(tokens, 0, Token.Kind.create_keyword)) {
-            var res = self.parseCreate(tokens);
+        if (expectTokenKind(tokens, 0, Token.Kind.create_table_keyword)) {
+            var res = self.parseCreateTable(tokens);
             return .{ .val = res.val, .err = res.err };
         }
 
@@ -709,14 +738,64 @@ const Parser = struct {
     }
 };
 
-fn execute(_: RocksDB, _: AST) struct { val: ?AST, err: ?Error } {
-    return .{ .val = null, .err = null };
-}
+const Executor = struct {
+    allocator: mem.Allocator,
+
+    const QueryResponse = struct {
+        fields: ArrayList([]u8),
+        rows: ArrayList(u8),
+    };
+
+    fn init(allocator: mem.Allocator) Executor {
+        return Executor{ .allocator = allocator };
+    }
+
+    fn executeSelect(_: Executor, _: RocksDB, _: SelectAST) struct { val: ?QueryResponse, err: ?Error } {
+        return .{ .val = null, .err = null };
+    }
+
+    fn executeInsert(_: Executor, _: RocksDB, _: InsertAST) struct { val: ?QueryResponse, err: ?Error } {
+        return .{ .val = null, .err = null };
+    }
+
+    fn executeCreateTable(_: Executor, _: RocksDB, _: CreateTableAST) struct { val: ?QueryResponse, err: ?Error } {
+        return .{ .val = null, .err = null };
+    }
+
+    fn execute(self: Executor, db: RocksDB, ast: AST) struct { val: ?QueryResponse, err: ?Error } {
+        if (ast.kind == .select_keyword) {
+            var res = self.executeSelect(db, ast.select.*);
+            return .{ .val = res.val, .err = res.err };
+        } else if (ast.kind == .insert_keyword) {
+            var res = self.executeInsert(db, ast.insert.*);
+            return .{ .val = res.val, .err = res.err };
+        } else if (ast.kind == .create_table_keyword) {
+            var res = self.executeCreateTable(db, ast.create_table.*);
+            return .{ .val = res.val, .err = res.err };
+        }
+
+        return .{ .val = null, .err = "Cannot print unknown statement" };
+    }
+};
 
 pub fn main() !void {
     if (std.os.argv.len < 2) {
         std.debug.print("Expected file name to interpret", .{});
         return;
+    }
+
+    var debugTokens = false;
+    var debugAST = false;
+    var args = std.process.args();
+    _ = args.next();
+    while (args.next()) |arg| {
+        if (mem.eql(u8, arg, "--debug-tokens")) {
+            debugTokens = true;
+        }
+
+        if (mem.eql(u8, arg, "--debug-ast")) {
+            debugAST = true;
+        }
     }
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -738,11 +817,13 @@ pub fn main() !void {
         return;
     }
 
-    // for (tokens.items) |token| {
-    //     std.debug.print("Token: ", .{});
-    //     token.print();
-    //     std.debug.print("\n", .{});
-    // }
+    if (debugTokens) {
+        for (tokens.items) |token| {
+            std.debug.print("Token: ", .{});
+            token.print();
+            std.debug.print("\n", .{});
+        }
+    }
 
     if (tokens.items.len == 0) {
         std.debug.print("Program is empty", .{});
@@ -756,8 +837,10 @@ pub fn main() !void {
         return;
     }
 
-    if (parseRes.val) |ast| {
-        ast.print();
+    if (debugAST) {
+        if (parseRes.val) |ast| {
+            ast.print();
+        }
     }
 
     const openRes = RocksDB.open();
@@ -766,7 +849,8 @@ pub fn main() !void {
         return;
     }
 
-    const executeRes = execute(openRes.val.?, parseRes.val.?);
+    const executor = Executor.init(allocator);
+    const executeRes = executor.execute(openRes.val.?, parseRes.val.?);
     if (executeRes.err) |err| {
         std.debug.print("Failed to execute: {s}", .{err});
         return;

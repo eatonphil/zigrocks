@@ -6,12 +6,12 @@ pub fn build(b: *std.build.Builder) void {
     exe.linkLibC();
     exe.linkSystemLibraryName("rocksdb");
 
-    if (@hasDecl(@TypeOf(exe.*), "addLibPath")) {
-        exe.addLibPath("./rocksdb");
-        exe.addIncludeDir("./rocksdb/include");
-    } else {
+    if (@hasDecl(@TypeOf(exe.*), "addLibraryPath")) {
         exe.addLibraryPath("./rocksdb");
         exe.addIncludePath("./rocksdb/include");
+    } else {
+        exe.addLibPath("./rocksdb");
+        exe.addIncludeDir("./rocksdb/include");
     }
 
     exe.setOutputDir(".");
