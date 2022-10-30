@@ -17,7 +17,7 @@ pub fn main() !void {
     var debugTokens = false;
     var debugAST = false;
     var args = std.process.args();
-    while (args.nextPosix()) |arg| {
+    while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--debug-tokens")) {
             debugTokens = true;
         }
