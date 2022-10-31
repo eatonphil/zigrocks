@@ -69,6 +69,7 @@ const RocksDB = struct {
     const Iter = struct {
         iter: *rdb.rocksdb_iterator_t,
         first: bool,
+        prefix: []const u8,
 
         fn next(self: *Iter) ?IterEntry {
             if (!self.first) {
@@ -82,6 +83,15 @@ const RocksDB = struct {
 
             var keySize: usize = 0;
             var key = rdb.rocksdb_iter_key(self.iter, &keySize);
+
+            // Make sure key is still within the prefix
+            if (self.prefix.len > 0) {
+                if (self.prefix.len > keySize or
+                    !std.mem.eql(u8, key[0..self.prefix.len], self.prefix))
+                {
+                    return null;
+                }
+            }
 
             var valueSize: usize = 0;
             var value = rdb.rocksdb_iter_value(self.iter, &valueSize);
@@ -99,7 +109,11 @@ const RocksDB = struct {
 
     fn iter(self: RocksDB, prefix: [:0]const u8) struct { val: ?Iter, err: ?[]const u8 } {
         var readOptions = rdb.rocksdb_readoptions_create();
-        var it = Iter{ .iter = undefined, .first = true };
+        var it = Iter{
+            .iter = undefined,
+            .first = true,
+            .prefix = prefix,
+        };
         if (rdb.rocksdb_create_iterator(self.db, readOptions)) |i| {
             it.iter = i;
         } else {
