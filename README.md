@@ -34,4 +34,5 @@ References:
 * [RocksDB C tests](https://github.com/facebook/rocksdb/blob/main/db/c_test.c)
 * [Minimal RocksDB/C example](https://gist.github.com/nitingupta910/4640638be7e7ad39c41e)
 * [Zig build explained](https://zig.news/xq/zig-build-explained-part-3-1ima)
+* [Zig Programming Language Discord's #zig-help channel](https://discord.gg/gxsFFjE)
 * [gosql](https://github.com/eatonphil/gosql)
