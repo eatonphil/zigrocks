@@ -5,3 +5,4 @@ zig-out
 *.o
 *.dylib
 main
+kv
