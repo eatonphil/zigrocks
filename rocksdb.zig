@@ -5,15 +5,15 @@ const rdb = @cImport(@cInclude("rocksdb/c.h"));
 const RocksDB = struct {
     db: *rdb.rocksdb_t,
 
-    fn open(dir: []const u8) struct { val: ?RocksDB, err: ?[]u8 } {
+    fn open(dir: []const u8) union(enum) { val: RocksDB, err: []u8 } {
         var options: ?*rdb.rocksdb_options_t = rdb.rocksdb_options_create();
         rdb.rocksdb_options_set_create_if_missing(options, 1);
         var err: ?[*:0]u8 = null;
         var db = rdb.rocksdb_open(options, dir.ptr, &err);
-        if (err != null) {
-            return .{ .val = null, .err = std.mem.span(err) };
+        if (err) |errStr| {
+            return .{ .err = std.mem.span(errStr) };
         }
-        return .{ .val = RocksDB{ .db = db.? }, .err = null };
+        return .{ .val = RocksDB{ .db = db.? } };
     }
 
     fn close(self: RocksDB) void {
@@ -39,7 +39,7 @@ const RocksDB = struct {
         return null;
     }
 
-    fn get(self: RocksDB, key: [:0]const u8) struct { val: ?[]u8, err: ?[]u8 } {
+    fn get(self: RocksDB, key: [:0]const u8) union(enum) { val: []u8, err: []u8, not_found: bool } {
         var readOptions = rdb.rocksdb_readoptions_create();
         var valueLength: usize = 0;
         var err: ?[*:0]u8 = null;
@@ -52,13 +52,13 @@ const RocksDB = struct {
             &err,
         );
         if (err) |errStr| {
-            return .{ .val = null, .err = std.mem.span(errStr) };
+            return .{ .err = std.mem.span(errStr) };
         }
         if (v == 0) {
-            return .{ .val = null, .err = null };
+            return .{ .not_found = true };
         }
 
-        return .{ .val = v[0..valueLength], .err = null };
+        return .{ .val = v[0..valueLength] };
     }
 
     const IterEntry = struct {
@@ -107,7 +107,7 @@ const RocksDB = struct {
         }
     };
 
-    fn iter(self: RocksDB, prefix: [:0]const u8) struct { val: ?Iter, err: ?[]const u8 } {
+    fn iter(self: RocksDB, prefix: [:0]const u8) union(enum) { val: Iter, err: []const u8 } {
         var readOptions = rdb.rocksdb_readoptions_create();
         var it = Iter{
             .iter = undefined,
@@ -117,7 +117,7 @@ const RocksDB = struct {
         if (rdb.rocksdb_create_iterator(self.db, readOptions)) |i| {
             it.iter = i;
         } else {
-            return .{ .val = null, .err = "Could not create iterator" };
+            return .{ .err = "Could not create iterator" };
         }
 
         if (prefix.len > 0) {
@@ -129,16 +129,21 @@ const RocksDB = struct {
         } else {
             rdb.rocksdb_iter_seek_to_first(it.iter);
         }
-        return .{ .val = it, .err = null };
+        return .{ .val = it };
     }
 };
 
 pub fn main() !void {
-    var openRes = RocksDB.open("/tmp/db");
-    if (openRes.err) |err| {
-        std.debug.print("Failed to open: {s}.\n", .{err});
+    var db: RocksDB = undefined;
+    switch (RocksDB.open("/tmp/db")) {
+        .val => |_db| {
+            db = _db;
+        },
+        .err => |err| {
+            std.debug.print("Failed to open: {s}.\n", .{err});
+            return;
+        },
     }
-    var db = openRes.val.?;
     defer db.close();
 
     var args = std.process.args();
@@ -172,27 +177,28 @@ pub fn main() !void {
             return;
         }
     } else if (std.mem.eql(u8, command, "get")) {
-        var getRes = db.get(key);
-        if (getRes.err) |err| {
-            std.debug.print("Error getting key: {s}.\n", .{err});
-            return;
-        }
-
-        if (getRes.val) |v| {
-            std.debug.print("{s}\n", .{v});
-        } else {
-            std.debug.print("Key not found.\n", .{});
+        switch (db.get(key)) {
+            .err => |err| {
+                std.debug.print("Error getting key: {s}.\n", .{err});
+                return;
+            },
+            .val => |val| std.debug.print("{s}\n", .{val}),
+            .not_found => std.debug.print("Key not found.\n", .{}),
         }
     } else {
         var prefix = key;
-        var iterRes = db.iter(prefix);
-        if (iterRes.err) |err| {
-            std.debug.print("Error getting iterator: {s}.\n", .{err});
-        }
-        var iter = iterRes.val.?;
-        defer iter.close();
-        while (iter.next()) |entry| {
-            std.debug.print("{s} = {s}\n", .{ entry.key, entry.value });
+        switch (db.iter(prefix)) {
+            .err => |err| std.debug.print("Error getting iterator: {s}.\n", .{err}),
+            .val => |iter| {
+                // Create a local variable so that it.next() can
+                // mutate it. The switch variable is const but the
+                // local variable is non const.
+                var it = iter;
+                defer it.close();
+                while (it.next()) |entry| {
+                    std.debug.print("{s} = {s}\n", .{ entry.key, entry.value });
+                }
+            },
         }
     }
 }
