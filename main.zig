@@ -3,13 +3,9 @@ const std = @import("std");
 const RocksDB = @import("rocksdb.zig").RocksDB;
 const lex = @import("lex.zig");
 const parse = @import("parse.zig");
+const execute = @import("execute.zig");
 
 pub fn main() !void {
-    if (std.os.argv.len < 2) {
-        std.debug.print("Expected file name to interpret", .{});
-        return;
-    }
-
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -17,6 +13,9 @@ pub fn main() !void {
     var debugTokens = false;
     var debugAST = false;
     var args = std.process.args();
+    var scriptArg: usize = 0;
+    var databaseArg: usize = 0;
+    var i: usize = 0;
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--debug-tokens")) {
             debugTokens = true;
@@ -25,9 +24,31 @@ pub fn main() !void {
         if (std.mem.eql(u8, arg, "--debug-ast")) {
             debugAST = true;
         }
+
+        if (std.mem.eql(u8, arg, "--database")) {
+            databaseArg = i + 1;
+            _ = args.next();
+        }
+
+        if (std.mem.eql(u8, arg, "--script")) {
+            scriptArg = i + 1;
+            _ = args.next();
+        }
+
+        i += 1;
     }
 
-    const file = try std.fs.cwd().openFileZ(std.os.argv[1], .{});
+    if (databaseArg == 0) {
+        std.debug.print("--database is a required flag. Should be a directory for data.\n", .{});
+        return;
+    }
+
+    if (scriptArg == 0) {
+        std.debug.print("--script is a required flag. Should be a file containing SQL.\n", .{});
+        return;
+    }
+
+    const file = try std.fs.cwd().openFileZ(std.os.argv[scriptArg], .{});
     defer file.close();
 
     const file_size = try file.getEndPos();
@@ -54,29 +75,38 @@ pub fn main() !void {
     }
 
     const parser = parse.Parser.init(allocator);
-    const parseRes = parser.parse(tokens);
-    if (parseRes.err) |err| {
-        std.debug.print("Failed to parse: {s}", .{err});
-        return;
+    var ast: parse.AST = undefined;
+    switch (parser.parse(tokens)) {
+        .err => |err| {
+            std.debug.print("Failed to parse: {s}", .{err});
+            return;
+        },
+        .val => |val| ast = val,
     }
 
     if (debugAST) {
-        if (parseRes.val) |ast| {
-            ast.print();
-        }
+        ast.print();
     }
 
-    // const openRes = RocksDB.open();
-    // if (openRes.err) |err| {
-    //     std.debug.print("Failed to open database: {s}", .{err});
-    //     return;
-    // }
-    // defer openRes.val.?.close();
+    var db: RocksDB = undefined;
+    var dataDirectory = std.mem.span(std.os.argv[databaseArg]);
+    switch (RocksDB.open(dataDirectory)) {
+        .err => |err| {
+            std.debug.print("Failed to open database: {s}", .{err});
+            return;
+        },
+        .val => |val| db = val,
+    }
+    defer db.close();
 
-    // const executor = Executor.init(allocator);
-    // const executeRes = executor.execute(openRes.val.?, parseRes.val.?);
-    // if (executeRes.err) |err| {
-    //     std.debug.print("Failed to execute: {s}", .{err});
-    //     return;
-    // }
+    const executor = execute.Executor.init(allocator, db);
+    switch (executor.execute(ast)) {
+        .err => |err| {
+            std.debug.print("Failed to execute: {s}", .{err});
+            return;
+        },
+        .val => |val| {
+            std.debug.print("{s}\n", .{val});
+        },
+    }
 }

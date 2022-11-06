@@ -2,10 +2,10 @@ const std = @import("std");
 
 const rdb = @cImport(@cInclude("rocksdb/c.h"));
 
-const RocksDB = struct {
+pub const RocksDB = struct {
     db: *rdb.rocksdb_t,
 
-    fn open(dir: []const u8) union(enum) { val: RocksDB, err: []u8 } {
+    pub fn open(dir: []const u8) union(enum) { val: RocksDB, err: []u8 } {
         var options: ?*rdb.rocksdb_options_t = rdb.rocksdb_options_create();
         rdb.rocksdb_options_set_create_if_missing(options, 1);
         var err: ?[*:0]u8 = null;
@@ -16,11 +16,11 @@ const RocksDB = struct {
         return .{ .val = RocksDB{ .db = db.? } };
     }
 
-    fn close(self: RocksDB) void {
+    pub fn close(self: RocksDB) void {
         rdb.rocksdb_close(self.db);
     }
 
-    fn set(self: RocksDB, key: [:0]const u8, value: [:0]const u8) ?[]u8 {
+    pub fn set(self: RocksDB, key: [:0]const u8, value: [:0]const u8) ?[]u8 {
         var writeOptions = rdb.rocksdb_writeoptions_create();
         var err: ?[*:0]u8 = null;
         rdb.rocksdb_put(
@@ -39,7 +39,7 @@ const RocksDB = struct {
         return null;
     }
 
-    fn get(self: RocksDB, key: [:0]const u8) union(enum) { val: []u8, err: []u8, not_found: bool } {
+    pub fn get(self: RocksDB, key: [:0]const u8) union(enum) { val: []u8, err: []u8, not_found: bool } {
         var readOptions = rdb.rocksdb_readoptions_create();
         var valueLength: usize = 0;
         var err: ?[*:0]u8 = null;
@@ -61,17 +61,17 @@ const RocksDB = struct {
         return .{ .val = v[0..valueLength] };
     }
 
-    const IterEntry = struct {
+    pub const IterEntry = struct {
         key: []const u8,
         value: []const u8,
     };
 
-    const Iter = struct {
+    pub const Iter = struct {
         iter: *rdb.rocksdb_iterator_t,
         first: bool,
         prefix: []const u8,
 
-        fn next(self: *Iter) ?IterEntry {
+        pub fn next(self: *Iter) ?IterEntry {
             if (!self.first) {
                 rdb.rocksdb_iter_next(self.iter);
             }
@@ -102,12 +102,12 @@ const RocksDB = struct {
             };
         }
 
-        fn close(self: Iter) void {
+        pub fn close(self: Iter) void {
             rdb.rocksdb_iter_destroy(self.iter);
         }
     };
 
-    fn iter(self: RocksDB, prefix: [:0]const u8) union(enum) { val: Iter, err: []const u8 } {
+    pub fn iter(self: RocksDB, prefix: [:0]const u8) union(enum) { val: Iter, err: []const u8 } {
         var readOptions = rdb.rocksdb_readoptions_create();
         var it = Iter{
             .iter = undefined,
@@ -191,8 +191,7 @@ pub fn main() !void {
             .err => |err| std.debug.print("Error getting iterator: {s}.\n", .{err}),
             .val => |iter| {
                 // Create a local variable so that it.next() can
-                // mutate it. The switch variable is const but the
-                // local variable is non const.
+                // mutate it as a reference.
                 var it = iter;
                 defer it.close();
                 while (it.next()) |entry| {

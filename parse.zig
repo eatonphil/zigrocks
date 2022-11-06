@@ -5,10 +5,10 @@ const Token = lex.Token;
 
 const Error = []const u8;
 
-const BinaryOperationAST = struct {
+pub const BinaryOperationAST = struct {
     operator: Token,
-    left: ExpressionAST,
-    right: ExpressionAST,
+    left: *ExpressionAST,
+    right: *ExpressionAST,
 
     fn print(self: BinaryOperationAST) void {
         self.left.print();
@@ -17,21 +17,14 @@ const BinaryOperationAST = struct {
     }
 };
 
-const ExpressionAST = struct {
-    kind: Kind,
-    literal: *Token,
-    binary_operation: *BinaryOperationAST,
-
-    const Kind = enum {
-        literal,
-        binary_operation,
-    };
+pub const ExpressionAST = union(enum) {
+    literal: Token,
+    binary_operation: BinaryOperationAST,
 
     fn print(self: ExpressionAST) void {
-        if (self.kind == .literal) {
-            std.debug.print("{s}", .{self.literal.string()});
-        } else {
-            self.binary_operation.print();
+        switch (self) {
+            .literal => |literal| std.debug.print("{s}", .{literal.string()}),
+            .binary_operation => self.binary_operation.print(),
         }
     }
 };
@@ -39,7 +32,7 @@ const ExpressionAST = struct {
 pub const SelectAST = struct {
     columns: std.ArrayList(Token),
     from: Token,
-    where: ?*ExpressionAST,
+    where: ?ExpressionAST,
 
     fn print(self: SelectAST) void {
         std.debug.print("SELECT\n", .{});
@@ -102,21 +95,16 @@ pub const CreateTableAST = struct {
     }
 };
 
-pub const AST = struct {
-    select: *SelectAST,
-    insert: *InsertAST,
-    create_table: *CreateTableAST,
-    kind: Token.Kind,
+pub const AST = union(enum) {
+    select: SelectAST,
+    insert: InsertAST,
+    create_table: CreateTableAST,
 
     pub fn print(self: AST) void {
-        if (self.kind == .select_keyword) {
-            self.select.print();
-        } else if (self.kind == .insert_keyword) {
-            self.insert.print();
-        } else if (self.kind == .create_table_keyword) {
-            self.create_table.print();
-        } else {
-            std.debug.print("Cannot print unknown statement", .{});
+        switch (self) {
+            .select => |select| select.print(),
+            .insert => |insert| insert.print(),
+            .create_table => |create_table| create_table.print(),
         }
     }
 };
@@ -136,83 +124,72 @@ pub const Parser = struct {
         return tokens.items[index].kind == kind;
     }
 
-    fn parseExpression(self: Parser, tokens: std.ArrayList(Token), index: usize) struct {
-        val: ?ExpressionAST,
-        nextPosition: usize,
-        err: ?Error,
+    fn parseExpression(self: Parser, tokens: std.ArrayList(Token), index: usize) union(enum) {
+        val: struct {
+            ast: ExpressionAST,
+            nextPosition: usize,
+        },
+        err: Error,
     } {
         var i = index;
 
-        var e = ExpressionAST{
-            .kind = undefined,
-            .literal = undefined,
-            .binary_operation = undefined,
-        };
+        var e: ExpressionAST = undefined;
 
         if (expectTokenKind(tokens, i, Token.Kind.numeric) or
             expectTokenKind(tokens, i, Token.Kind.identifier))
         {
-            e.kind = ExpressionAST.Kind.literal;
-            e.literal = self.allocator.create(Token) catch return .{
-                .val = null,
-                .nextPosition = 0,
-                .err = "Could not allocate for token.",
-            };
-            e.literal.* = tokens.items[i];
+            e = ExpressionAST{ .literal = tokens.items[i] };
             i = i + 1;
         } else {
-            return .{ .val = null, .nextPosition = 0, .err = "No expression" };
+            return .{ .err = "No expression" };
         }
 
         if (expectTokenKind(tokens, i, Token.Kind.equal_operator)) {
-            var oldE = e;
-            e = ExpressionAST{
-                .kind = ExpressionAST.Kind.binary_operation,
-                .literal = undefined,
-                .binary_operation = undefined,
+            var newE = ExpressionAST{
+                .binary_operation = BinaryOperationAST{
+                    .operator = tokens.items[i],
+                    .left = self.allocator.create(ExpressionAST) catch return .{
+                        .err = "Could not allocate for left expression.",
+                    },
+                    .right = self.allocator.create(ExpressionAST) catch return .{
+                        .err = "Could not allocate for right expression.",
+                    },
+                },
             };
-            e.binary_operation = self.allocator.create(BinaryOperationAST) catch return .{
-                .val = null,
-                .nextPosition = 0,
-                .err = "Could not allocate for BinaryOperationAST.",
-            };
-            e.binary_operation.* = BinaryOperationAST{
-                .operator = tokens.items[i],
-                .left = oldE,
-                .right = undefined,
-            };
+            newE.binary_operation.left.* = e;
+            e = newE;
 
-            var rightRes = self.parseExpression(tokens, i + 1);
-            if (rightRes.err != null) {
-                return .{ .val = null, .nextPosition = 0, .err = rightRes.err };
+            switch (self.parseExpression(tokens, i + 1)) {
+                .err => |err| return .{ .err = err },
+                .val => |val| {
+                    e.binary_operation.right.* = val.ast;
+                    i = val.nextPosition;
+                },
             }
-
-            e.binary_operation.right = rightRes.val.?;
-            i = rightRes.nextPosition;
         }
 
-        return .{ .val = e, .nextPosition = i, .err = null };
+        return .{ .val = .{ .ast = e, .nextPosition = i } };
     }
 
-    fn parseSelect(self: Parser, tokens: std.ArrayList(Token)) struct { val: ?AST, err: ?Error } {
+    fn parseSelect(self: Parser, tokens: std.ArrayList(Token)) union(enum) { val: AST, err: Error } {
         var i: usize = 0;
         if (!expectTokenKind(tokens, i, Token.Kind.select_keyword)) {
-            return .{ .val = null, .err = "Expected SELECT keyword" };
+            return .{ .err = "Expected SELECT keyword" };
         }
         i = i + 1;
 
-        var select = self.allocator.create(SelectAST) catch return .{
-            .val = null,
-            .err = "Could not allocate SelectAST",
+        var select = SelectAST{
+            .columns = std.ArrayList(Token).init(self.allocator),
+            .from = undefined,
+            .where = null,
         };
-        select.columns = std.ArrayList(Token).init(self.allocator);
 
         // Parse columns
         while (!expectTokenKind(tokens, i, Token.Kind.from_keyword)) {
             if (select.columns.items.len > 0) {
                 if (!expectTokenKind(tokens, i, Token.Kind.comma_syntax)) {
                     lex.debug(tokens, i, "Expected comma.\n");
-                    return .{ .val = null, .err = "Expected comma." };
+                    return .{ .err = "Expected comma." };
                 }
 
                 i = i + 1;
@@ -220,11 +197,10 @@ pub const Parser = struct {
 
             if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
                 lex.debug(tokens, i, "Expected identifier after this.\n");
-                return .{ .val = null, .err = "Expected identifier." };
+                return .{ .err = "Expected identifier." };
             }
 
             select.columns.append(tokens.items[i]) catch return .{
-                .val = null,
                 .err = "Could not allocate for token.",
             };
             i = i + 1;
@@ -232,68 +208,57 @@ pub const Parser = struct {
 
         if (!expectTokenKind(tokens, i, Token.Kind.from_keyword)) {
             lex.debug(tokens, i, "Expected FROM keyword after this.\n");
-            return .{ .val = null, .err = "Expected FROM keyword" };
+            return .{ .err = "Expected FROM keyword" };
         }
         i = i + 1;
 
         if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
             lex.debug(tokens, i, "Expected FROM table name after this.\n");
-            return .{ .val = null, .err = "Expected FROM keyword" };
+            return .{ .err = "Expected FROM keyword" };
         }
         select.from = tokens.items[i];
         i = i + 1;
 
         if (expectTokenKind(tokens, i, Token.Kind.where_keyword)) {
             // i + 1, skip past the where
-            var res = self.parseExpression(tokens, i + 1);
-            if (res.err != null) {
-                return .{ .val = null, .err = res.err };
+            switch (self.parseExpression(tokens, i + 1)) {
+                .err => |err| return .{ .err = err },
+                .val => |val| {
+                    select.where = val.ast;
+                    i = val.nextPosition;
+                },
             }
-
-            select.where = self.allocator.create(ExpressionAST) catch return .{
-                .val = null,
-                .err = "Could not allocate ExpressionAST",
-            };
-            select.where.?.* = res.val.?;
-            i = res.nextPosition;
         }
 
         if (i < tokens.items.len) {
             lex.debug(tokens, i, "Unexpected token.");
-            return .{ .val = null, .err = "Did not complete parsing SELECT" };
+            return .{ .err = "Did not complete parsing SELECT" };
         }
 
-        return .{ .val = AST{
-            .kind = Token.Kind.select_keyword,
-            .select = select,
-            .create_table = undefined,
-            .insert = undefined,
-        }, .err = null };
+        return .{ .val = AST{ .select = select } };
     }
 
-    fn parseCreateTable(self: Parser, tokens: std.ArrayList(Token)) struct { val: ?AST, err: ?Error } {
+    fn parseCreateTable(self: Parser, tokens: std.ArrayList(Token)) union(enum) { val: AST, err: Error } {
         var i: usize = 0;
         if (!expectTokenKind(tokens, i, Token.Kind.create_table_keyword)) {
-            return .{ .val = null, .err = "Expected CREATE TABLE keyword" };
+            return .{ .err = "Expected CREATE TABLE keyword" };
         }
         i = i + 1;
 
         if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
             lex.debug(tokens, i, "Expected table name after CREATE TABLE keyword.\n");
-            return .{ .val = null, .err = "Expected CREATE TABLE name" };
+            return .{ .err = "Expected CREATE TABLE name" };
         }
 
-        var create_table = self.allocator.create(CreateTableAST) catch return .{
-            .val = null,
-            .err = "Could not allocate CreateTableAST",
+        var create_table = CreateTableAST{
+            .columns = std.ArrayList(CreateTableColumnAST).init(self.allocator),
+            .table = tokens.items[i],
         };
-        create_table.columns = std.ArrayList(CreateTableColumnAST).init(self.allocator);
-        create_table.table = tokens.items[i];
         i = i + 1;
 
         if (!expectTokenKind(tokens, i, Token.Kind.left_paren_syntax)) {
             lex.debug(tokens, i, "Expected opening paren after CREATE TABLE name.\n");
-            return .{ .val = null, .err = "Expected opening paren" };
+            return .{ .err = "Expected opening paren" };
         }
         i = i + 1;
 
@@ -301,7 +266,7 @@ pub const Parser = struct {
             if (create_table.columns.items.len > 0) {
                 if (!expectTokenKind(tokens, i, Token.Kind.comma_syntax)) {
                     lex.debug(tokens, i, "Expected comma.\n");
-                    return .{ .val = null, .err = "Expected comma." };
+                    return .{ .err = "Expected comma." };
                 }
 
                 i = i + 1;
@@ -310,7 +275,7 @@ pub const Parser = struct {
             var column = CreateTableColumnAST{ .name = undefined, .kind = undefined };
             if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
                 lex.debug(tokens, i, "Expected column name after comma.\n");
-                return .{ .val = null, .err = "Expected identifier." };
+                return .{ .err = "Expected identifier." };
             }
 
             column.name = tokens.items[i];
@@ -318,14 +283,13 @@ pub const Parser = struct {
 
             if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
                 lex.debug(tokens, i, "Expected column type after column name.\n");
-                return .{ .val = null, .err = "Expected identifier." };
+                return .{ .err = "Expected identifier." };
             }
 
             column.kind = tokens.items[i];
             i = i + 1;
 
             create_table.columns.append(column) catch return .{
-                .val = null,
                 .err = "Could not allocate for column.",
             };
         }
@@ -335,46 +299,39 @@ pub const Parser = struct {
 
         if (i < tokens.items.len) {
             lex.debug(tokens, i, "Unexpected token.");
-            return .{ .val = null, .err = "Did not complete parsing CREATE TABLE" };
+            return .{ .err = "Did not complete parsing CREATE TABLE" };
         }
 
-        return .{ .val = AST{
-            .kind = Token.Kind.create_table_keyword,
-            .select = undefined,
-            .create_table = create_table,
-            .insert = undefined,
-        }, .err = null };
+        return .{ .val = AST{ .create_table = create_table } };
     }
 
-    fn parseInsert(self: Parser, tokens: std.ArrayList(Token)) struct { val: ?AST, err: ?Error } {
+    fn parseInsert(self: Parser, tokens: std.ArrayList(Token)) union(enum) { val: AST, err: Error } {
         var i: usize = 0;
         if (!expectTokenKind(tokens, i, Token.Kind.insert_keyword)) {
-            return .{ .val = null, .err = "Expected INSERT INTO keyword" };
+            return .{ .err = "Expected INSERT INTO keyword" };
         }
         i = i + 1;
 
         if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
             lex.debug(tokens, i, "Expected table name after INSERT INTO keyword.\n");
-            return .{ .val = null, .err = "Expected INSERT INTO table name" };
+            return .{ .err = "Expected INSERT INTO table name" };
         }
 
-        var insert = self.allocator.create(InsertAST) catch return .{
-            .val = null,
-            .err = "Could not allocate InsertAST",
+        var insert = InsertAST{
+            .values = std.ArrayList(ExpressionAST).init(self.allocator),
+            .table = tokens.items[i],
         };
-        insert.values = std.ArrayList(ExpressionAST).init(self.allocator);
-        insert.table = tokens.items[i];
         i = i + 1;
 
         if (!expectTokenKind(tokens, i, Token.Kind.values_keyword)) {
             lex.debug(tokens, i, "Expected VALUES keyword.\n");
-            return .{ .val = null, .err = "Expected VALUES keyword" };
+            return .{ .err = "Expected VALUES keyword" };
         }
         i = i + 1;
 
         if (!expectTokenKind(tokens, i, Token.Kind.left_paren_syntax)) {
             lex.debug(tokens, i, "Expected opening paren after CREATE TABLE name.\n");
-            return .{ .val = null, .err = "Expected opening paren" };
+            return .{ .err = "Expected opening paren" };
         }
         i = i + 1;
 
@@ -382,22 +339,21 @@ pub const Parser = struct {
             if (insert.values.items.len > 0) {
                 if (!expectTokenKind(tokens, i, Token.Kind.comma_syntax)) {
                     lex.debug(tokens, i, "Expected comma.\n");
-                    return .{ .val = null, .err = "Expected comma." };
+                    return .{ .err = "Expected comma." };
                 }
 
                 i = i + 1;
             }
 
-            var expressionRes = self.parseExpression(tokens, i);
-            if (expressionRes.err != null) {
-                return .{ .val = null, .err = expressionRes.err };
+            switch (self.parseExpression(tokens, i)) {
+                .err => |err| return .{ .err = err },
+                .val => |val| {
+                    insert.values.append(val.ast) catch return .{
+                        .err = "Could not allocate for expression.",
+                    };
+                    i = val.nextPosition;
+                },
             }
-
-            insert.values.append(expressionRes.val.?) catch return .{
-                .val = null,
-                .err = "Could not allocate for expression.",
-            };
-            i = expressionRes.nextPosition;
         }
 
         // Skip past final paren.
@@ -405,33 +361,34 @@ pub const Parser = struct {
 
         if (i < tokens.items.len) {
             lex.debug(tokens, i, "Unexpected token.");
-            return .{ .val = null, .err = "Did not complete parsing INSERT INTO" };
+            return .{ .err = "Did not complete parsing INSERT INTO" };
         }
 
-        return .{ .val = AST{
-            .kind = Token.Kind.insert_keyword,
-            .select = undefined,
-            .create_table = undefined,
-            .insert = insert,
-        }, .err = null };
+        return .{ .val = AST{ .insert = insert } };
     }
 
-    pub fn parse(self: Parser, tokens: std.ArrayList(Token)) struct { val: ?AST, err: ?Error } {
+    pub fn parse(self: Parser, tokens: std.ArrayList(Token)) union(enum) { val: AST, err: Error } {
         if (expectTokenKind(tokens, 0, Token.Kind.select_keyword)) {
-            var res = self.parseSelect(tokens);
-            return .{ .val = res.val, .err = res.err };
+            return switch (self.parseSelect(tokens)) {
+                .err => |err| .{ .err = err },
+                .val => |val| .{ .val = val },
+            };
         }
 
         if (expectTokenKind(tokens, 0, Token.Kind.create_table_keyword)) {
-            var res = self.parseCreateTable(tokens);
-            return .{ .val = res.val, .err = res.err };
+            return switch (self.parseCreateTable(tokens)) {
+                .err => |err| .{ .err = err },
+                .val => |val| .{ .val = val },
+            };
         }
 
         if (expectTokenKind(tokens, 0, Token.Kind.insert_keyword)) {
-            var res = self.parseInsert(tokens);
-            return .{ .val = res.val, .err = res.err };
+            return switch (self.parseInsert(tokens)) {
+                .err => |err| .{ .err = err },
+                .val => |val| .{ .val = val },
+            };
         }
 
-        return .{ .val = null, .err = "Unknown statement" };
+        return .{ .err = "Unknown statement" };
     }
 };
