@@ -1,5 +1,1 @@
-SELECT
-  a,b
-FROM
-  main
-WHERE x = 1
+select name, age from x

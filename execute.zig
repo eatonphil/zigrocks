@@ -21,9 +21,14 @@ pub const Executor = struct {
     };
     const QueryResponseResult = Result(QueryResponse);
 
-    fn executeExpression(_: Executor, e: parse.ExpressionAST, _: Storage.Row) []const u8 {
+    fn executeExpression(_: Executor, e: parse.ExpressionAST, row: Storage.Row) []const u8 {
         return switch (e) {
-            .literal => |lit| lit.string(),
+            .literal => |lit| switch (lit.kind) {
+                .numeric => lit.string(),
+                .string => lit.string(),
+                .identifier => row.get(lit.string()),
+                else => unreachable,
+            },
             else => "[UNSUPPORTED]",
         };
     }
@@ -39,8 +44,10 @@ pub const Executor = struct {
         var requestedFieldIndexes = std.ArrayList(usize).init(self.allocator);
         for (s.columns.items) |requestedColumn, i| {
             var found = false;
-            for (table.columns) |column| {
+            var requestedFieldIndex = i;
+            for (table.columns) |column, j| {
                 if (std.mem.eql(u8, column, requestedColumn.string())) {
+                    requestedFieldIndex = j;
                     found = true;
                 }
             }
@@ -52,7 +59,7 @@ pub const Executor = struct {
             requestedFields.append(requestedColumn.string()) catch return .{
                 .err = "Could not allocate for requested field.",
             };
-            requestedFieldIndexes.append(i) catch return .{
+            requestedFieldIndexes.append(requestedFieldIndex) catch return .{
                 .err = "Could not allocate for requested field index.",
             };
         }
@@ -72,19 +79,30 @@ pub const Executor = struct {
         defer iter.close();
 
         while (iter.next()) |row| {
+            var add = false;
             if (s.where) |where| {
                 if (!std.mem.eql(u8, self.executeExpression(where, row), "0")) {
-                    var requested = Storage.Row.init(self.allocator, requestedFields.items);
-                    var items = row.items();
-                    for (requestedFieldIndexes.items) |i| {
-                        requested.append(items[i]) catch return .{
-                            .err = "Could not allocate for requested cell",
-                        };
-                    }
-                    rows.append(requested.items()) catch return .{
-                        .err = "Could not allocate for row",
+                    add = true;
+                }
+            } else {
+                add = true;
+            }
+
+            if (add) {
+                var requested = Storage.Row.init(self.allocator, requestedFields.items);
+                var items = row.items();
+                for (requestedFieldIndexes.items) |i| {
+                    var cellCopy = std.ArrayList(u8).init(self.allocator);
+                    _ = cellCopy.writer().write(items[i]) catch return .{
+                        .err = "Could not make copy of cell",
+                    };
+                    requested.append(cellCopy.items) catch return .{
+                        .err = "Could not allocate for requested cell",
                     };
                 }
+                rows.append(requested.items()) catch return .{
+                    .err = "Could not allocate for row",
+                };
             }
         }
 

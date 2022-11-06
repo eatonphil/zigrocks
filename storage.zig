@@ -7,19 +7,19 @@ const Error = @import("result.zig").Error;
 fn serializeString(writer: std.ArrayList(u8).Writer, string: []const u8) void {
     var length: [8]u8 = undefined;
     std.mem.writeIntBig(u64, &length, string.len);
-    _ = writer.write(length[0..8]) catch unreachable;
-    _ = writer.write(string) catch unreachable;
+    var n = writer.write(length[0..8]) catch unreachable;
+    std.debug.assert(n == 8);
+    n = writer.write(string) catch unreachable;
+    std.debug.assert(n == string.len);
 }
 
 fn deserializeString(string: []const u8) struct {
-    string: []const u8,
     offset: usize,
+    string: []const u8,
 } {
     var length = std.mem.readIntBig(u64, string[0..8]);
-    return .{
-        .offset = length + 8,
-        .string = string[8..length],
-    };
+    var offset = length + 8;
+    return .{ .offset = offset, .string = string[8..offset] };
 }
 
 pub const Storage = struct {
@@ -127,7 +127,7 @@ pub const Storage = struct {
             serializeString(valueWriter, cell);
         }
 
-        return null;
+        return self.db.set(key.items, value.items);
     }
 
     pub const Row = struct {
@@ -151,6 +151,8 @@ pub const Storage = struct {
                     return self.cells.items[i];
                 }
             }
+
+            return "";
         }
 
         pub fn items(self: Row) [][]const u8 {
@@ -176,7 +178,7 @@ pub const Storage = struct {
         pub fn next(self: *RowIter) ?Row {
             var rowBytes: []const u8 = undefined;
             if (self.iter.next()) |b| {
-                rowBytes = b.key;
+                rowBytes = b.value;
             } else {
                 return null;
             }
@@ -199,7 +201,7 @@ pub const Storage = struct {
     pub fn getRowIter(self: Storage, table: []const u8) Result(RowIter) {
         var rowPrefix = std.ArrayList(u8).init(self.allocator);
         var rowPrefixWriter = rowPrefix.writer();
-        _ = rowPrefixWriter.write("tbl") catch return .{ .err = "Could not allocate for table prefix" };
+        _ = rowPrefixWriter.write("row") catch return .{ .err = "Could not allocate for table prefix" };
         _ = rowPrefixWriter.write(table) catch return .{ .err = "Could not allocate for table name" };
 
         var iter = switch (self.db.iter(rowPrefix.items)) {

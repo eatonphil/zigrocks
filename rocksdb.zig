@@ -25,6 +25,8 @@ pub const RocksDB = struct {
         return result;
     }
 
+    // TODO: replace std.mem.span(errStr) with ownZeroString()
+
     pub fn open(allocator: std.mem.Allocator, dir: []const u8) union(enum) { val: RocksDB, err: []u8 } {
         var options: ?*rdb.rocksdb_options_t = rdb.rocksdb_options_create();
         rdb.rocksdb_options_set_create_if_missing(options, 1);
@@ -32,7 +34,7 @@ pub const RocksDB = struct {
         var db = rdb.rocksdb_open(options, dir.ptr, &err);
         var r = RocksDB{ .db = db.?, .allocator = allocator };
         if (err) |errStr| {
-            return .{ .err = r.ownZeroString(errStr) };
+            return .{ .err = std.mem.span(errStr) };
         }
         return .{ .val = r };
     }
@@ -54,7 +56,7 @@ pub const RocksDB = struct {
             &err,
         );
         if (err) |errStr| {
-            return self.ownZeroString(errStr);
+            return std.mem.span(errStr);
         }
 
         return null;
@@ -73,7 +75,7 @@ pub const RocksDB = struct {
             &err,
         );
         if (err) |errStr| {
-            return .{ .err = self.ownZeroString(errStr) };
+            return .{ .err = std.mem.span(errStr) };
         }
         if (v == 0) {
             return .{ .not_found = true };
@@ -140,7 +142,7 @@ pub const RocksDB = struct {
         var err: ?[*:0]u8 = null;
         rdb.rocksdb_iter_get_error(it.iter, &err);
         if (err) |errStr| {
-            return .{ .err = self.ownZeroString(errStr) };
+            return .{ .err = std.mem.span(errStr) };
         }
 
         if (prefix.len > 0) {
@@ -157,71 +159,76 @@ pub const RocksDB = struct {
     }
 };
 
-// pub fn main() !void {
-//     var db: RocksDB = undefined;
-//     switch (RocksDB.open("/tmp/db")) {
-//         .val => |_db| {
-//             db = _db;
-//         },
-//         .err => |err| {
-//             std.debug.print("Failed to open: {s}.\n", .{err});
-//             return;
-//         },
-//     }
-//     defer db.close();
+pub fn main() !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
 
-//     var args = std.process.args();
-//     _ = args.next();
-//     var key: []const u8 = "";
-//     var value: []const u8 = "";
-//     var command = "get";
-//     while (args.next()) |arg| {
-//         if (std.mem.eql(u8, arg, "set")) {
-//             command = "set";
-//             key = std.mem.span(args.next().?);
-//             value = std.mem.span(args.next().?);
-//         } else if (std.mem.eql(u8, arg, "get")) {
-//             command = "get";
-//             key = std.mem.span(args.next().?);
-//         } else if (std.mem.eql(u8, arg, "list")) {
-//             command = "lst";
-//             if (args.next()) |argNext| {
-//                 key = std.mem.span(argNext);
-//             }
-//         } else {
-//             std.debug.print("Must specify command (get, set, or list). Got: '{s}'.\n", .{arg});
-//             return;
-//         }
-//     }
+    const allocator = arena.allocator();
 
-//     if (std.mem.eql(u8, command, "set")) {
-//         var setErr = db.set(key, value);
-//         if (setErr) |err| {
-//             std.debug.print("Error setting key: {s}.\n", .{err});
-//             return;
-//         }
-//     } else if (std.mem.eql(u8, command, "get")) {
-//         switch (db.get(key)) {
-//             .err => |err| {
-//                 std.debug.print("Error getting key: {s}.\n", .{err});
-//                 return;
-//             },
-//             .val => |val| std.debug.print("{s}\n", .{val}),
-//             .not_found => std.debug.print("Key not found.\n", .{}),
-//         }
-//     } else {
-//         var prefix = key;
-//         switch (db.iter(prefix)) {
-//             .err => |err| std.debug.print("Error getting iterator: {s}.\n", .{err}),
-//             .val => |iter| {
-//                 // Create a local variable so that it.next() can
-//                 // mutate it as a reference.
-//                 var it = iter;
-//                 defer it.close();
-//                 while (it.next()) |entry| {
-//                     std.debug.print("{s} = {s}\n", .{ entry.key, entry.value });
-//                 }
-//             },
-//         }
-//     }
-// }
+    var db: RocksDB = undefined;
+    switch (RocksDB.open(allocator, "/tmp/db")) {
+        .val => |_db| {
+            db = _db;
+        },
+        .err => |err| {
+            std.debug.print("Failed to open: {s}.\n", .{err});
+            return;
+        },
+    }
+    defer db.close();
+
+    var args = std.process.args();
+    _ = args.next();
+    var key: []const u8 = "";
+    var value: []const u8 = "";
+    var command = "get";
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "set")) {
+            command = "set";
+            key = std.mem.span(args.next().?);
+            value = std.mem.span(args.next().?);
+        } else if (std.mem.eql(u8, arg, "get")) {
+            command = "get";
+            key = std.mem.span(args.next().?);
+        } else if (std.mem.eql(u8, arg, "list")) {
+            command = "lst";
+            if (args.next()) |argNext| {
+                key = std.mem.span(argNext);
+            }
+        } else {
+            std.debug.print("Must specify command (get, set, or list). Got: '{s}'.\n", .{arg});
+            return;
+        }
+    }
+
+    if (std.mem.eql(u8, command, "set")) {
+        var setErr = db.set(key, value);
+        if (setErr) |err| {
+            std.debug.print("Error setting key: {s}.\n", .{err});
+            return;
+        }
+    } else if (std.mem.eql(u8, command, "get")) {
+        switch (db.get(key)) {
+            .err => |err| {
+                std.debug.print("Error getting key: {s}.\n", .{err});
+                return;
+            },
+            .val => |val| std.debug.print("{s}\n", .{val}),
+            .not_found => std.debug.print("Key not found.\n", .{}),
+        }
+    } else {
+        var prefix = key;
+        switch (db.iter(prefix)) {
+            .err => |err| std.debug.print("Error getting iterator: {s}.\n", .{err}),
+            .val => |iter| {
+                // Create a local variable so that it.next() can
+                // mutate it as a reference.
+                var it = iter;
+                defer it.close();
+                while (it.next()) |entry| {
+                    std.debug.print("{s} = {s}\n", .{ entry.key, entry.value });
+                }
+            },
+        }
+    }
+}

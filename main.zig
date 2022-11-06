@@ -16,7 +16,7 @@ pub fn main() !void {
     var args = std.process.args();
     var scriptArg: usize = 0;
     var databaseArg: usize = 0;
-    var i: usize = 0;
+    var i: usize = 1;
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--debug-tokens")) {
             debugTokens = true;
@@ -109,6 +109,11 @@ pub fn main() !void {
             return;
         },
         .val => |val| {
+            if (val.rows.len == 0) {
+                std.debug.print("ok\n", .{});
+                return;
+            }
+
             std.debug.print("| ", .{});
             for (val.fields) |field| {
                 std.debug.print("{s}\t\t |", .{field});
