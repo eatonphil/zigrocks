@@ -1,9 +1,8 @@
 const std = @import("std");
 
 const lex = @import("lex.zig");
+const Result = @import("result.zig").Result;
 const Token = lex.Token;
-
-const Error = []const u8;
 
 pub const BinaryOperationAST = struct {
     operator: Token,
@@ -124,13 +123,10 @@ pub const Parser = struct {
         return tokens.items[index].kind == kind;
     }
 
-    fn parseExpression(self: Parser, tokens: std.ArrayList(Token), index: usize) union(enum) {
-        val: struct {
-            ast: ExpressionAST,
-            nextPosition: usize,
-        },
-        err: Error,
-    } {
+    fn parseExpression(self: Parser, tokens: std.ArrayList(Token), index: usize) Result(struct {
+        ast: ExpressionAST,
+        nextPosition: usize,
+    }) {
         var i = index;
 
         var e: ExpressionAST = undefined;
@@ -171,7 +167,7 @@ pub const Parser = struct {
         return .{ .val = .{ .ast = e, .nextPosition = i } };
     }
 
-    fn parseSelect(self: Parser, tokens: std.ArrayList(Token)) union(enum) { val: AST, err: Error } {
+    fn parseSelect(self: Parser, tokens: std.ArrayList(Token)) Result(AST) {
         var i: usize = 0;
         if (!expectTokenKind(tokens, i, Token.Kind.select_keyword)) {
             return .{ .err = "Expected SELECT keyword" };
@@ -238,7 +234,7 @@ pub const Parser = struct {
         return .{ .val = AST{ .select = select } };
     }
 
-    fn parseCreateTable(self: Parser, tokens: std.ArrayList(Token)) union(enum) { val: AST, err: Error } {
+    fn parseCreateTable(self: Parser, tokens: std.ArrayList(Token)) Result(AST) {
         var i: usize = 0;
         if (!expectTokenKind(tokens, i, Token.Kind.create_table_keyword)) {
             return .{ .err = "Expected CREATE TABLE keyword" };
@@ -305,7 +301,7 @@ pub const Parser = struct {
         return .{ .val = AST{ .create_table = create_table } };
     }
 
-    fn parseInsert(self: Parser, tokens: std.ArrayList(Token)) union(enum) { val: AST, err: Error } {
+    fn parseInsert(self: Parser, tokens: std.ArrayList(Token)) Result(AST) {
         var i: usize = 0;
         if (!expectTokenKind(tokens, i, Token.Kind.insert_keyword)) {
             return .{ .err = "Expected INSERT INTO keyword" };
@@ -367,7 +363,7 @@ pub const Parser = struct {
         return .{ .val = AST{ .insert = insert } };
     }
 
-    pub fn parse(self: Parser, tokens: std.ArrayList(Token)) union(enum) { val: AST, err: Error } {
+    pub fn parse(self: Parser, tokens: std.ArrayList(Token)) Result(AST) {
         if (expectTokenKind(tokens, 0, Token.Kind.select_keyword)) {
             return switch (self.parseSelect(tokens)) {
                 .err => |err| .{ .err = err },

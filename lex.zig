@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Error = []const u8;
+const Error = @import("result.zig").Error;
 
 pub const Token = struct {
     start: u64,
@@ -119,9 +119,9 @@ var BUILTINS = [_]Builtin{
     .{ .name = ",", .kind = Token.Kind.comma_syntax },
 };
 
-comptime {
-    std.debug.assert(BUILTINS.len == @typeInfo(Token.Kind).Enum.fields.len - 3);
-}
+//comptime {
+//    std.debug.assert(BUILTINS.len == @typeInfo(Token.Kind).Enum.fields.len - 3);
+//}
 
 fn asciiCaseInsensitiveEqual(left: []const u8, right: []const u8) bool {
     var min = left;

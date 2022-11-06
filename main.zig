@@ -4,6 +4,7 @@ const RocksDB = @import("rocksdb.zig").RocksDB;
 const lex = @import("lex.zig");
 const parse = @import("parse.zig");
 const execute = @import("execute.zig");
+const Storage = @import("storage.zig").Storage;
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -90,7 +91,7 @@ pub fn main() !void {
 
     var db: RocksDB = undefined;
     var dataDirectory = std.mem.span(std.os.argv[databaseArg]);
-    switch (RocksDB.open(dataDirectory)) {
+    switch (RocksDB.open(allocator, dataDirectory)) {
         .err => |err| {
             std.debug.print("Failed to open database: {s}", .{err});
             return;
@@ -99,14 +100,28 @@ pub fn main() !void {
     }
     defer db.close();
 
-    const executor = execute.Executor.init(allocator, db);
+    const storage = Storage.init(allocator, db);
+
+    const executor = execute.Executor.init(allocator, storage);
     switch (executor.execute(ast)) {
         .err => |err| {
             std.debug.print("Failed to execute: {s}", .{err});
             return;
         },
         .val => |val| {
-            std.debug.print("{s}\n", .{val});
+            std.debug.print("| ", .{});
+            for (val.fields) |field| {
+                std.debug.print("{s}\t\t |", .{field});
+            }
+            std.debug.print("\n", .{});
+
+            for (val.rows) |row| {
+                std.debug.print("| ", .{});
+                for (row) |cell| {
+                    std.debug.print("{s}\t\t |", .{cell});
+                }
+                std.debug.print("\n", .{});
+            }
         },
     }
 }
