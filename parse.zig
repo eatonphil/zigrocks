@@ -29,14 +29,15 @@ pub const ExpressionAST = union(enum) {
 };
 
 pub const SelectAST = struct {
-    columns: std.ArrayList(Token),
+    columns: std.ArrayList(ExpressionAST),
     from: Token,
     where: ?ExpressionAST,
 
     fn print(self: SelectAST) void {
         std.debug.print("SELECT\n", .{});
         for (self.columns.items) |column, i| {
-            std.debug.print("  {s}", .{column.string()});
+            std.debug.print("  ", .{});
+            column.print();
             if (i < self.columns.items.len - 1) {
                 std.debug.print(",", .{});
             }
@@ -175,7 +176,7 @@ pub const Parser = struct {
         i = i + 1;
 
         var select = SelectAST{
-            .columns = std.ArrayList(Token).init(self.allocator),
+            .columns = std.ArrayList(ExpressionAST).init(self.allocator),
             .from = undefined,
             .where = null,
         };
@@ -191,15 +192,16 @@ pub const Parser = struct {
                 i = i + 1;
             }
 
-            if (!expectTokenKind(tokens, i, Token.Kind.identifier)) {
-                lex.debug(tokens, i, "Expected identifier after this.\n");
-                return .{ .err = "Expected identifier." };
-            }
+            switch (self.parseExpression(tokens, i)) {
+                .err => |err| return .{ .err = err },
+                .val => |val| {
+                    i = val.nextPosition;
 
-            select.columns.append(tokens.items[i]) catch return .{
-                .err = "Could not allocate for token.",
-            };
-            i = i + 1;
+                    select.columns.append(val.ast) catch return .{
+                        .err = "Could not allocate for token.",
+                    };
+                },
+            }
         }
 
         if (!expectTokenKind(tokens, i, Token.Kind.from_keyword)) {

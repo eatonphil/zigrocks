@@ -21,12 +21,18 @@ pub const Executor = struct {
     };
     const QueryResponseResult = Result(QueryResponse);
 
-    fn executeExpression(_: Executor, e: parse.ExpressionAST, row: Storage.Row) []const u8 {
+    fn executeExpression(self: Executor, e: parse.ExpressionAST, row: Storage.Row) []const u8 {
         return switch (e) {
             .literal => |lit| switch (lit.kind) {
                 .numeric => lit.string(),
                 .string => lit.string(),
-                .identifier => row.get(lit.string()),
+                .identifier => {
+                    // Storage.Row's results are internal buffer
+                    // views. So make a copy.
+                    var copy = std.ArrayList(u8).init(self.allocator);
+                    _ = copy.writer().write(row.get(lit.string())) catch return "";
+                    return copy.items;
+                },
                 else => unreachable,
             },
             else => "[UNSUPPORTED]",
@@ -34,33 +40,25 @@ pub const Executor = struct {
     }
 
     fn executeSelect(self: Executor, s: parse.SelectAST) QueryResponseResult {
-        const table = switch (self.storage.getTable(s.from.string())) {
+        switch (self.storage.getTable(s.from.string())) {
             .err => |err| return .{ .err = err },
-            .val => |val| val,
-        };
+            else => _ = 1,
+        }
 
         // Now validate and store requested fields
         var requestedFields = std.ArrayList([]const u8).init(self.allocator);
-        var requestedFieldIndexes = std.ArrayList(usize).init(self.allocator);
-        for (s.columns.items) |requestedColumn, i| {
-            var found = false;
-            var requestedFieldIndex = i;
-            for (table.columns) |column, j| {
-                if (std.mem.eql(u8, column, requestedColumn.string())) {
-                    requestedFieldIndex = j;
-                    found = true;
-                }
-            }
-
-            if (!found) {
-                return .{ .err = "No such column exists." };
-            }
-
-            requestedFields.append(requestedColumn.string()) catch return .{
-                .err = "Could not allocate for requested field.",
+        for (s.columns.items) |requestedColumn| {
+            var fieldName = switch (requestedColumn) {
+                .literal => |lit| switch (lit.kind) {
+                    .identifier => lit.string(),
+                    // TODO: give reasonable names
+                    else => "unknown",
+                },
+                // TODO: give reasonable names
+                else => "unknown",
             };
-            requestedFieldIndexes.append(requestedFieldIndex) catch return .{
-                .err = "Could not allocate for requested field index.",
+            requestedFields.append(fieldName) catch return .{
+                .err = "Could not allocate for requested field.",
             };
         }
 
@@ -89,18 +87,14 @@ pub const Executor = struct {
             }
 
             if (add) {
-                var requested = Storage.Row.init(self.allocator, requestedFields.items);
-                var items = row.items();
-                for (requestedFieldIndexes.items) |i| {
-                    var cellCopy = std.ArrayList(u8).init(self.allocator);
-                    _ = cellCopy.writer().write(items[i]) catch return .{
-                        .err = "Could not make copy of cell",
-                    };
-                    requested.append(cellCopy.items) catch return .{
+                var requested = std.ArrayList([]const u8).init(self.allocator);
+                for (s.columns.items) |exp| {
+                    var val = self.executeExpression(exp, row);
+                    requested.append(val) catch return .{
                         .err = "Could not allocate for requested cell",
                     };
                 }
-                rows.append(requested.items()) catch return .{
+                rows.append(requested.items) catch return .{
                     .err = "Could not allocate for row",
                 };
             }

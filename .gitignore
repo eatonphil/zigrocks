@@ -6,3 +6,4 @@ zig-out
 *.dylib
 main
 kv
+data

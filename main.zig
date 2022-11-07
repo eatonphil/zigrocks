@@ -16,7 +16,7 @@ pub fn main() !void {
     var args = std.process.args();
     var scriptArg: usize = 0;
     var databaseArg: usize = 0;
-    var i: usize = 1;
+    var i: usize = 0;
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--debug-tokens")) {
             debugTokens = true;
@@ -28,11 +28,13 @@ pub fn main() !void {
 
         if (std.mem.eql(u8, arg, "--database")) {
             databaseArg = i + 1;
+            i += 1;
             _ = args.next();
         }
 
         if (std.mem.eql(u8, arg, "--script")) {
             scriptArg = i + 1;
+            i += 1;
             _ = args.next();
         }
 
@@ -116,14 +118,24 @@ pub fn main() !void {
 
             std.debug.print("| ", .{});
             for (val.fields) |field| {
-                std.debug.print("{s}\t\t |", .{field});
+                std.debug.print("{s}\t\t|", .{field});
+            }
+            std.debug.print("\n", .{});
+            std.debug.print("+ ", .{});
+            for (val.fields) |field| {
+                var fieldLen = field.len;
+                while (fieldLen > 0) {
+                    std.debug.print("=", .{});
+                    fieldLen -= 1;
+                }
+                std.debug.print("\t\t+", .{});
             }
             std.debug.print("\n", .{});
 
             for (val.rows) |row| {
                 std.debug.print("| ", .{});
                 for (row) |cell| {
-                    std.debug.print("{s}\t\t |", .{cell});
+                    std.debug.print("{s}\t\t|", .{cell});
                 }
                 std.debug.print("\n", .{});
             }

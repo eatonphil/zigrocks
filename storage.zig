@@ -159,8 +159,8 @@ pub const Storage = struct {
             return self.cells.items;
         }
 
-        fn reset(self: Row) void {
-            self.clearRetainingCapacity();
+        fn reset(self: *Row) void {
+            self.cells.clearRetainingCapacity();
         }
     };
 
@@ -183,6 +183,7 @@ pub const Storage = struct {
                 return null;
             }
 
+            self.row.reset();
             var offset: usize = 0;
             while (offset < rowBytes.len) {
                 var d = deserializeString(rowBytes[offset..]);
