@@ -8,24 +8,23 @@ $ ( cd rocksdb && make shared_lib -j8 )
 $ zig build
 ```
 
-And run! (Currently, it only parses and reprints the parsed code.)
+And run!
 
 ```bash
-$ cat tests/select.sql
-SELECT
-  a,b
-FROM
-  main
-WHERE x = 1
-
-$ ./main tests/select.sql
-SELECT
-  a,
-  b
-FROM
-  main
-WHERE
-  x = 1
+$ ./main --database data --script <(echo "CREATE TABLE y (year int, age int)")
+ok
+$ ./main --database data --script <(echo "INSERT INTO y VALUES (2010, 30)")
+ok
+$ ./main --database data --script <(echo "INSERT INTO y VALUES (2000, 20)")
+ok
+$ ./main --database data --script <(echo "INSERT INTO y VALUES (2000, 18)")
+ok
+$ ./main --database data --script <(echo "SELECT age, year FROM y")
+| age           |year           |
++ ===           +====           +
+| 18            |2000           |
+| 30            |2010           |
+| 20            |2000           |
 ```
 
 References:
