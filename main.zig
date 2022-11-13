@@ -79,7 +79,7 @@ pub fn main() !void {
 
     const parser = parse.Parser.init(allocator);
     var ast: parse.AST = undefined;
-    switch (parser.parse(tokens)) {
+    switch (parser.parse(tokens.items)) {
         .err => |err| {
             std.debug.print("Failed to parse: {s}", .{err});
             return;

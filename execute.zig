@@ -4,8 +4,7 @@ const parse = @import("parse.zig");
 const Result = @import("result.zig").Result;
 const RocksDB = @import("rocksdb.zig").RocksDB;
 const Storage = @import("storage.zig").Storage;
-const serializeString = @import("storage.zig").serializeString;
-const deserializeString = @import("storage.zig").deserializeString;
+const serde = @import("serde.zig");
 
 pub const Executor = struct {
     allocator: std.mem.Allocator,
@@ -16,9 +15,9 @@ pub const Executor = struct {
     }
 
     const QueryResponse = struct {
-        fields: [][]const u8,
-        // Array of cells (which is an array of strings (which is an array of u8))
-        rows: [][][]const u8,
+        fields: []serde.String,
+        // Array of cells (which is an array of serde (which is an array of u8))
+        rows: [][]serde.String,
         empty: bool,
     };
     const QueryResponseResult = Result(QueryResponse);
@@ -26,14 +25,14 @@ pub const Executor = struct {
     const Value = union(enum) {
         bool_value: bool,
         null_value: bool,
-        string_value: []const u8,
+        string_value: serde.String,
         integer_value: i64,
 
         const TRUE = Value{ .bool_value = true };
         const FALSE = Value{ .bool_value = false };
         const NULL = Value{ .null_value = true };
 
-        fn fromIntegerString(iBytes: []const u8) Value {
+        fn fromIntegerString(iBytes: serde.String) Value {
             const i = std.fmt.parseInt(i64, iBytes, 10) catch return Value{
                 .integer_value = 0,
             };
@@ -49,7 +48,7 @@ pub const Executor = struct {
             };
         }
 
-        fn asString(self: Value) []const u8 {
+        fn asString(self: Value) serde.String {
             return switch (self) {
                 .null_value => "",
                 .bool_value => |value| if (value) "true" else "false",
@@ -82,7 +81,7 @@ pub const Executor = struct {
             };
         }
 
-        fn serialize(self: Value, buf: *std.ArrayList(u8)) []const u8 {
+        fn serialize(self: Value, buf: *std.ArrayList(u8)) serde.String {
             switch (self) {
                 .null_value => buf.append('0') catch return "",
 
@@ -93,25 +92,24 @@ pub const Executor = struct {
 
                 .string_value => |value| {
                     buf.append('2') catch return "";
-                    serializeString(buf.writer(), value);
+                    serde.serializeString(buf, value) catch return "";
                 },
 
-                .integer_value => {
+                .integer_value => |value| {
                     buf.append('3') catch return "";
-                    var s = self.asString();
-                    _ = buf.appendSlice(s) catch return "";
+                    serde.serializeInteger(i64, buf, value) catch return "";
                 },
             }
 
             return buf.items;
         }
 
-        fn deserialize(data: []const u8) Value {
+        fn deserialize(data: serde.String) Value {
             return switch (data[0]) {
                 '0' => Value.NULL,
                 '1' => Value{ .bool_value = data[1] == '1' },
-                '2' => Value{ .string_value = deserializeString(data[1..]).string },
-                '3' => Value{ .integer_value = std.mem.readIntBig(i64, data[0..8]) },
+                '2' => Value{ .string_value = serde.deserializeString(data[1..]).string },
+                '3' => Value{ .integer_value = serde.deserializeInteger(i64, data[1..]) },
                 else => unreachable,
             };
         }
@@ -136,7 +134,7 @@ pub const Executor = struct {
                 var right = self.executeExpression(bin_op.right.*, row);
 
                 if (bin_op.operator.kind == .equal_operator) {
-                    // Cast dissimilar types to strings
+                    // Cast dissimilar types to serde
                     if (@enumToInt(left) != @enumToInt(right)) {
                         left = Value{ .string_value = left.asString() };
                         right = Value{ .string_value = right.asString() };
@@ -154,8 +152,10 @@ pub const Executor = struct {
 
                 if (bin_op.operator.kind == .concat_operator) {
                     var copy = std.ArrayList(u8).init(self.allocator);
-                    copy.appendSlice(left.asString()) catch return Value.NULL;
-                    copy.appendSlice(right.asString()) catch return Value.NULL;
+                    copy.writer().print(
+                        "{s}{s}",
+                        .{ left.asString(), right.asString() },
+                    ) catch return Value.NULL;
                     return Value{ .string_value = copy.items };
                 }
 
@@ -175,8 +175,8 @@ pub const Executor = struct {
         }
 
         // Now validate and store requested fields
-        var requestedFields = std.ArrayList([]const u8).init(self.allocator);
-        for (s.columns.items) |requestedColumn| {
+        var requestedFields = std.ArrayList(serde.String).init(self.allocator);
+        for (s.columns) |requestedColumn| {
             var fieldName = switch (requestedColumn) {
                 .literal => |lit| switch (lit.kind) {
                     .identifier => lit.string(),
@@ -192,7 +192,7 @@ pub const Executor = struct {
         }
 
         // Prepare response
-        var rows = std.ArrayList([][]const u8).init(self.allocator);
+        var rows = std.ArrayList([]serde.String).init(self.allocator);
         var response = QueryResponse{
             .fields = requestedFields.items,
             .rows = undefined,
@@ -205,7 +205,6 @@ pub const Executor = struct {
         };
         defer iter.close();
 
-        var cellBuffer = std.ArrayList(u8).init(self.allocator);
         while (iter.next()) |row| {
             var add = false;
             if (s.where) |where| {
@@ -217,11 +216,11 @@ pub const Executor = struct {
             }
 
             if (add) {
-                var requested = std.ArrayList([]const u8).init(self.allocator);
-                for (s.columns.items) |exp| {
+                var requested = std.ArrayList(serde.String).init(self.allocator);
+                for (s.columns) |exp, i| {
                     var val = self.executeExpression(exp, row);
-                    cellBuffer.clearRetainingCapacity();
-                    requested.append(val.serialize(&cellBuffer)) catch return .{
+                    std.debug.print("column: {s}, cell: {s}\n", .{ response.fields[i], val.asString() });
+                    requested.append(val.asString()) catch return .{
                         .err = "Could not allocate for requested cell",
                     };
                 }
@@ -237,9 +236,9 @@ pub const Executor = struct {
 
     fn executeInsert(self: Executor, i: parse.InsertAST) QueryResponseResult {
         var cellBuffer = std.ArrayList(u8).init(self.allocator);
-        var cells = std.ArrayList([]const u8).init(self.allocator);
+        var cells = std.ArrayList(serde.String).init(self.allocator);
         var empty = std.ArrayList([]u8).init(self.allocator);
-        for (i.values.items) |v| {
+        for (i.values) |v| {
             var exp = self.executeExpression(v, Storage.Row.init(self.allocator, empty.items));
             cellBuffer.clearRetainingCapacity();
             cells.append(exp.serialize(&cellBuffer)) catch return .{ .err = "Could not allocate for cell" };
@@ -255,10 +254,10 @@ pub const Executor = struct {
     }
 
     fn executeCreateTable(self: Executor, c: parse.CreateTableAST) QueryResponseResult {
-        var columns = std.ArrayList([]const u8).init(self.allocator);
-        var types = std.ArrayList([]const u8).init(self.allocator);
+        var columns = std.ArrayList(serde.String).init(self.allocator);
+        var types = std.ArrayList(serde.String).init(self.allocator);
 
-        for (c.columns.items) |column| {
+        for (c.columns) |column| {
             columns.append(column.name.string()) catch return .{
                 .err = "Could not allocate for column name",
             };
@@ -299,26 +298,32 @@ pub const Executor = struct {
     }
 };
 
-test "serialize/deserialize strings" {
-    const expect = std.testing.expect;
+test "serialize/deserialize Value strings" {
+    const expectEqualStrings = std.testing.expectEqualStrings;
     const Value = Executor.Value;
 
     var stringTests = [_]struct {
         value: Value,
-        string: []const u8,
+        string: serde.String,
     }{
         .{ .value = Value.fromIntegerString("1"), .string = "1" },
         .{ .value = Value{ .integer_value = 1 }, .string = "1" },
         .{ .value = Value{ .integer_value = 1003 }, .string = "1003" },
+        .{ .value = Value{ .bool_value = false }, .string = "false" },
+        .{ .value = Value{ .bool_value = true }, .string = "true" },
     };
 
+    var buf = std.ArrayList(u8).init(std.testing.allocator);
+    defer buf.deinit();
     for (stringTests) |testCase| {
-        try expect(std.mem.eql(u8, testCase.value.asString(), testCase.string) == true);
+        buf.clearRetainingCapacity();
+        var serialized = testCase.value.serialize(&buf);
+        try expectEqualStrings(testCase.string, Value.deserialize(serialized).asString());
     }
 }
 
-test "serialize/deserialize integers" {
-    const expect = std.testing.expect;
+test "serialize/deserialize Value integers" {
+    const expectEqual = std.testing.expectEqual;
     const Value = Executor.Value;
 
     var integerTests = [_]struct {
@@ -333,7 +338,11 @@ test "serialize/deserialize integers" {
         .{ .value = Value{ .string_value = "1002" }, .integer = 1002 },
     };
 
+    var buf = std.ArrayList(u8).init(std.testing.allocator);
+    defer buf.deinit();
     for (integerTests) |testCase| {
-        try expect(testCase.value.asInteger() == testCase.integer);
+        buf.clearRetainingCapacity();
+        var serialized = testCase.value.serialize(&buf);
+        try expectEqual(testCase.integer, Value.deserialize(serialized).asInteger());
     }
 }

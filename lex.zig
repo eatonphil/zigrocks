@@ -1,12 +1,13 @@
 const std = @import("std");
 
+const serde = @import("serde.zig");
 const Error = @import("result.zig").Error;
 
 pub const Token = struct {
     start: u64,
     end: u64,
     kind: Kind,
-    source: []const u8,
+    source: serde.String,
 
     pub const Kind = enum {
         select_keyword,
@@ -34,11 +35,11 @@ pub const Token = struct {
         }
     };
 
-    pub fn string(self: Token) []const u8 {
+    pub fn string(self: Token) serde.String {
         return self.source[self.start..self.end];
     }
 
-    fn debug(self: Token, msg: []const u8) void {
+    fn debug(self: Token, msg: serde.String) void {
         var line: usize = 0;
         var column: usize = 0;
         var lineStartIndex: usize = 0;
@@ -78,16 +79,16 @@ pub const Token = struct {
     }
 };
 
-pub fn debug(tokens: std.ArrayList(Token), preferredIndex: usize, msg: []const u8) void {
+pub fn debug(tokens: []Token, preferredIndex: usize, msg: serde.String) void {
     var i = preferredIndex;
-    while (i >= tokens.items.len) {
+    while (i >= tokens.len) {
         i = i - 0;
     }
 
-    tokens.items[i].debug(msg);
+    tokens[i].debug(msg);
 }
 
-fn eatWhitespace(source: []const u8, index: usize) usize {
+fn eatWhitespace(source: serde.String, index: usize) usize {
     var res = index;
     while (source[res] == ' ' or
         source[res] == '\n' or
@@ -104,7 +105,7 @@ fn eatWhitespace(source: []const u8, index: usize) usize {
 }
 
 const Builtin = struct {
-    name: []const u8,
+    name: serde.String,
     kind: Token.Kind,
 };
 
@@ -129,7 +130,7 @@ var BUILTINS = [_]Builtin{
 //    std.debug.assert(BUILTINS.len == @typeInfo(Token.Kind).Enum.fields.len - 3);
 //}
 
-fn asciiCaseInsensitiveEqual(left: []const u8, right: []const u8) bool {
+fn asciiCaseInsensitiveEqual(left: serde.String, right: serde.String) bool {
     var min = left;
     if (right.len < left.len) {
         min = right;
@@ -154,7 +155,7 @@ fn asciiCaseInsensitiveEqual(left: []const u8, right: []const u8) bool {
     return true;
 }
 
-fn lexKeyword(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
+fn lexKeyword(source: serde.String, index: usize) struct { nextPosition: usize, token: ?Token } {
     var longestLen: usize = 0;
     var kind = Token.Kind.select_keyword;
     for (BUILTINS) |builtin| {
@@ -185,7 +186,7 @@ fn lexKeyword(source: []const u8, index: usize) struct { nextPosition: usize, to
     };
 }
 
-fn lexNumeric(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
+fn lexNumeric(source: serde.String, index: usize) struct { nextPosition: usize, token: ?Token } {
     var start = index;
     var end = index;
     var i = index;
@@ -209,7 +210,7 @@ fn lexNumeric(source: []const u8, index: usize) struct { nextPosition: usize, to
     };
 }
 
-fn lexString(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
+fn lexString(source: serde.String, index: usize) struct { nextPosition: usize, token: ?Token } {
     var i = index;
     if (source[i] != '\'') {
         return .{ .nextPosition = 0, .token = null };
@@ -242,7 +243,7 @@ fn lexString(source: []const u8, index: usize) struct { nextPosition: usize, tok
     };
 }
 
-fn lexIdentifier(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
+fn lexIdentifier(source: serde.String, index: usize) struct { nextPosition: usize, token: ?Token } {
     var start = index;
     var end = index;
     var i = index;
@@ -269,7 +270,7 @@ fn lexIdentifier(source: []const u8, index: usize) struct { nextPosition: usize,
     };
 }
 
-pub fn lex(source: []const u8, tokens: *std.ArrayList(Token)) ?Error {
+pub fn lex(source: serde.String, tokens: *std.ArrayList(Token)) ?Error {
     var i: usize = 0;
     while (true) {
         i = eatWhitespace(source, i);
@@ -306,7 +307,7 @@ pub fn lex(source: []const u8, tokens: *std.ArrayList(Token)) ?Error {
         }
 
         if (tokens.items.len > 0) {
-            debug(tokens.*, tokens.items.len - 1, "Last good token.\n");
+            debug(tokens.items, tokens.items.len - 1, "Last good token.\n");
         }
         return "Bad token";
     }
