@@ -11,20 +11,57 @@ $ zig build
 And run!
 
 ```bash
-$ ./main --database data --script <(echo "CREATE TABLE y (year int, age int)")
+$ ./main --database data --script <(echo "CREATE TABLE y (year int, age int, name text)")
+echo "CREATE TABLE y (year int, age int, name text)"
 ok
-$ ./main --database data --script <(echo "INSERT INTO y VALUES (2010, 30)")
+$ ./main --database data --script <(echo "INSERT INTO y VALUES (2010, 38, 'Gary')")
+echo "INSERT INTO y VALUES (2010, 38, 'Gary')"
 ok
-$ ./main --database data --script <(echo "INSERT INTO y VALUES (2000, 20)")
+$ ./main --database data --script <(echo "INSERT INTO y VALUES (2021, 92, 'Teej')")
+echo "INSERT INTO y VALUES (2021, 92, 'Teej')"
 ok
-$ ./main --database data --script <(echo "INSERT INTO y VALUES (2000, 18)")
+$ ./main --database data --script <(echo "INSERT INTO y VALUES (1994, 18, 'Mel')")
+echo "INSERT INTO y VALUES (1994, 18, 'Mel')"
 ok
-$ ./main --database data --script <(echo "SELECT age, year FROM y")
-| age           |year           |
-+ ===           +====           +
-| 18            |2000           |
-| 30            |2010           |
-| 20            |2000           |
+
+# Basic query
+$ ./main --database data --script <(echo "SELECT name, age, year FROM y")
+echo "SELECT name, age, year FROM y"
+| name          |age            |year           |
++ ====          +===            +====           +
+| Mel           |18             |1994           |
+| Gary          |38             |2010           |
+| Gary          |38             |2010           |
+| Mel           |18             |1994           |
+| Teej          |92             |2021           |
+| Teej          |92             |2021           |
+| Gary          |38             |2010           |
+| Teej          |92             |2021           |
+| Mel           |18             |1994           |
+
+# With WHERE
+$ ./main --database data --script <(echo "SELECT name, year, age FROM y WHERE age < 40")
+echo "SELECT name, year, age FROM y WHERE age < 40"
+| name          |year           |age            |
++ ====          +====           +===            +
+| Mel           |1994           |18             |
+| Gary          |2010           |38             |
+| Gary          |2010           |38             |
+| Mel           |1994           |18             |
+| Gary          |2010           |38             |
+| Mel           |1994           |18             |
+
+# With operations
+$ ./main --database data --script <(echo "SELECT 'Name: ' || name, year + 30, age FROM y WHERE age < 40")
+echo "SELECT 'Name: ' || name, year + 30, age FROM y WHERE age < 40"
+| unknown               |unknown                |age            |
++ =======               +=======                +===            +
+| Name: Mel             |2024           |18             |
+| Name: Gary            |2040           |38             |
+| Name: Gary            |2040           |38             |
+| Name: Mel             |2024           |18             |
+| Name: Gary            |2040           |38             |
+| Name: Mel             |2024           |18             |
 ```
 
 References:
