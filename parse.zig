@@ -22,7 +22,10 @@ pub const ExpressionAST = union(enum) {
 
     fn print(self: ExpressionAST) void {
         switch (self) {
-            .literal => |literal| std.debug.print("{s}", .{literal.string()}),
+            .literal => |literal| switch (literal.kind) {
+                .string => std.debug.print("'{s}'", .{literal.string()}),
+                else => std.debug.print("{s}", .{literal.string()}),
+            },
             .binary_operation => self.binary_operation.print(),
         }
     }
@@ -133,7 +136,8 @@ pub const Parser = struct {
         var e: ExpressionAST = undefined;
 
         if (expectTokenKind(tokens, i, Token.Kind.numeric) or
-            expectTokenKind(tokens, i, Token.Kind.identifier))
+            expectTokenKind(tokens, i, Token.Kind.identifier) or
+            expectTokenKind(tokens, i, Token.Kind.string))
         {
             e = ExpressionAST{ .literal = tokens[i] };
             i = i + 1;

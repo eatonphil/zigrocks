@@ -68,7 +68,7 @@ pub fn main() !void {
 
     if (debugTokens) {
         for (tokens.items) |token| {
-            std.debug.print("Token: {s}", .{token.string()});
+            std.debug.print("Token: {s}\n", .{token.string()});
         }
     }
 

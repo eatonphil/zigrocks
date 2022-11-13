@@ -238,7 +238,7 @@ fn lexString(source: serde.String, index: usize) struct { nextPosition: usize, t
             .source = source,
             .start = start,
             .end = end,
-            .kind = Token.Kind.numeric,
+            .kind = Token.Kind.string,
         },
     };
 }
