@@ -48,27 +48,12 @@ pub const Executor = struct {
             };
         }
 
-        fn asString(self: Value) serde.String {
-            return switch (self) {
-                .null_value => "",
-                .bool_value => |value| if (value) "true" else "false",
-                .string_value => |value| value,
-                .integer_value => |value| {
-                    var iBytes: [20]u8 = undefined;
-                    _ = std.fmt.bufPrint(&iBytes, "{d}", .{value}) catch return "";
-                    // Truncate non-numeric bytes
-                    var end: usize = 20;
-                    while (end > 0) {
-                        if (iBytes[end - 1] == '-' or
-                            (iBytes[end - 1] >= '0' and iBytes[end - 1] <= '9'))
-                        {
-                            break;
-                        }
-
-                        end -= 1;
-                    }
-                    return iBytes[0..end];
-                },
+        fn asString(self: Value, buf: *std.ArrayList(u8)) !void {
+            try switch (self) {
+                .null_value => _ = 1, // Do nothing
+                .bool_value => |value| buf.appendSlice(if (value) "true" else "false"),
+                .string_value => |value| buf.appendSlice(value),
+                .integer_value => |value| buf.writer().print("{d}", .{value}),
             };
         }
 
@@ -136,15 +121,28 @@ pub const Executor = struct {
                 if (bin_op.operator.kind == .equal_operator) {
                     // Cast dissimilar types to serde
                     if (@enumToInt(left) != @enumToInt(right)) {
-                        left = Value{ .string_value = left.asString() };
-                        right = Value{ .string_value = right.asString() };
+                        var leftBuf = std.ArrayList(u8).init(self.allocator);
+                        left.asString(&leftBuf) catch unreachable;
+                        left = Value{ .string_value = leftBuf.items };
+
+                        var rightBuf = std.ArrayList(u8).init(self.allocator);
+                        right.asString(&rightBuf) catch unreachable;
+                        right = Value{ .string_value = rightBuf.items };
                     }
 
                     return Value{
                         .bool_value = switch (left) {
                             .null_value => true,
                             .bool_value => |v| v == right.asBool(),
-                            .string_value => std.mem.eql(u8, left.asString(), right.asString()),
+                            .string_value => blk: {
+                                var leftBuf = std.ArrayList(u8).init(self.allocator);
+                                left.asString(&leftBuf) catch unreachable;
+
+                                var rightBuf = std.ArrayList(u8).init(self.allocator);
+                                right.asString(&rightBuf) catch unreachable;
+
+                                break :blk std.mem.eql(u8, leftBuf.items, rightBuf.items);
+                            },
                             .integer_value => left.asInteger() == right.asInteger(),
                         },
                     };
@@ -152,10 +150,8 @@ pub const Executor = struct {
 
                 if (bin_op.operator.kind == .concat_operator) {
                     var copy = std.ArrayList(u8).init(self.allocator);
-                    copy.writer().print(
-                        "{s}{s}",
-                        .{ left.asString(), right.asString() },
-                    ) catch return Value.NULL;
+                    left.asString(&copy) catch unreachable;
+                    right.asString(&copy) catch unreachable;
                     return Value{ .string_value = copy.items };
                 }
 
@@ -217,10 +213,11 @@ pub const Executor = struct {
 
             if (add) {
                 var requested = std.ArrayList(serde.String).init(self.allocator);
-                for (s.columns) |exp, i| {
+                for (s.columns) |exp| {
                     var val = self.executeExpression(exp, row);
-                    std.debug.print("column: {s}, cell: {s}\n", .{ response.fields[i], val.asString() });
-                    requested.append(val.asString()) catch return .{
+                    var valBuf = std.ArrayList(u8).init(self.allocator);
+                    val.asString(&valBuf) catch unreachable;
+                    requested.append(valBuf.items) catch return .{
                         .err = "Could not allocate for requested cell",
                     };
                 }
@@ -235,12 +232,11 @@ pub const Executor = struct {
     }
 
     fn executeInsert(self: Executor, i: parse.InsertAST) QueryResponseResult {
-        var cellBuffer = std.ArrayList(u8).init(self.allocator);
         var cells = std.ArrayList(serde.String).init(self.allocator);
         var empty = std.ArrayList([]u8).init(self.allocator);
         for (i.values) |v| {
             var exp = self.executeExpression(v, Storage.Row.init(self.allocator, empty.items));
-            cellBuffer.clearRetainingCapacity();
+            var cellBuffer = std.ArrayList(u8).init(self.allocator);
             cells.append(exp.serialize(&cellBuffer)) catch return .{ .err = "Could not allocate for cell" };
         }
 
