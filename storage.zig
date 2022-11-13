@@ -3,7 +3,30 @@ const std = @import("std");
 const RocksDB = @import("rocksdb.zig").RocksDB;
 const Result = @import("result.zig").Result;
 const Error = @import("result.zig").Error;
-const serde = @import("serde.zig");
+
+pub fn serializeInteger(comptime T: type, buf: *std.ArrayList(u8), i: T) !void {
+    var length: [@sizeOf(T)]u8 = undefined;
+    std.mem.writeIntBig(T, &length, i);
+    try buf.appendSlice(length[0..8]);
+}
+
+pub fn deserializeInteger(comptime T: type, buf: []const u8) T {
+    return std.mem.readIntBig(T, buf[0..@sizeOf(T)]);
+}
+
+pub fn serializeBytes(buf: *std.ArrayList(u8), bytes: []const u8) !void {
+    try serializeInteger(u64, buf, bytes.len);
+    try buf.appendSlice(bytes);
+}
+
+pub fn deserializeBytes(bytes: []const u8) struct {
+    offset: usize,
+    bytes: []const u8,
+} {
+    var length = deserializeInteger(u64, bytes);
+    var offset = length + 8;
+    return .{ .offset = offset, .bytes = bytes[8..offset] };
+}
 
 pub const Storage = struct {
     db: RocksDB,
@@ -16,20 +39,98 @@ pub const Storage = struct {
         };
     }
 
-    pub const Table = struct {
-        name: serde.String,
-        columns: []serde.String,
-        types: []serde.String,
+    pub const Value = union(enum) {
+        bool_value: bool,
+        null_value: bool,
+        string_value: []const u8,
+        integer_value: i64,
+
+        pub const TRUE = Value{ .bool_value = true };
+        pub const FALSE = Value{ .bool_value = false };
+        pub const NULL = Value{ .null_value = true };
+
+        pub fn fromIntegerString(iBytes: []const u8) Value {
+            const i = std.fmt.parseInt(i64, iBytes, 10) catch return Value{
+                .integer_value = 0,
+            };
+            return Value{ .integer_value = i };
+        }
+
+        pub fn asBool(self: Value) bool {
+            return switch (self) {
+                .null_value => false,
+                .bool_value => |value| value,
+                .string_value => |value| value.len > 0,
+                .integer_value => |value| value != 0,
+            };
+        }
+
+        pub fn asString(self: Value, buf: *std.ArrayList(u8)) !void {
+            try switch (self) {
+                .null_value => _ = 1, // Do nothing
+                .bool_value => |value| buf.appendSlice(if (value) "true" else "false"),
+                .string_value => |value| buf.appendSlice(value),
+                .integer_value => |value| buf.writer().print("{d}", .{value}),
+            };
+        }
+
+        pub fn asInteger(self: Value) i64 {
+            return switch (self) {
+                .null_value => 0,
+                .bool_value => |value| if (value) 1 else 0,
+                .string_value => |value| fromIntegerString(value).integer_value,
+                .integer_value => |value| value,
+            };
+        }
+
+        pub fn serialize(self: Value, buf: *std.ArrayList(u8)) []const u8 {
+            switch (self) {
+                .null_value => buf.append('0') catch return "",
+
+                .bool_value => |value| {
+                    buf.append('1') catch return "";
+                    buf.append(if (value) '1' else '0') catch return "";
+                },
+
+                .string_value => |value| {
+                    buf.append('2') catch return "";
+                    serializeBytes(buf, value) catch return "";
+                },
+
+                .integer_value => |value| {
+                    buf.append('3') catch return "";
+                    serializeInteger(i64, buf, value) catch return "";
+                },
+            }
+
+            return buf.items;
+        }
+
+        pub fn deserialize(data: []const u8) Value {
+            return switch (data[0]) {
+                '0' => Value.NULL,
+                '1' => Value{ .bool_value = data[1] == '1' },
+                '2' => Value{ .string_value = deserializeBytes(data[1..]).bytes },
+                '3' => Value{ .integer_value = deserializeInteger(i64, data[1..]) },
+                else => unreachable,
+            };
+        }
     };
 
-    pub fn getTable(self: Storage, name: serde.String) Result(Table) {
+    pub const Table = struct {
+        name: []const u8,
+        columns: [][]const u8,
+        types: [][]const u8,
+    };
+
+    pub fn getTable(self: Storage, name: []const u8) Result(Table) {
         var tableKey = std.ArrayList(u8).init(self.allocator);
         tableKey.writer().print("tbl{s}", .{name}) catch return .{
             .err = "Could not allocate for table prefix",
         };
 
-        var columns = std.ArrayList(serde.String).init(self.allocator);
-        var types = std.ArrayList(serde.String).init(self.allocator);
+        var columns = std.ArrayList([]const u8).init(self.allocator);
+        var types = std.ArrayList([]const u8).init(self.allocator);
         var table = Table{
             .name = name,
             .columns = undefined,
@@ -44,15 +145,15 @@ pub const Storage = struct {
 
         var columnOffset: usize = 0;
         while (columnOffset < columnInfo.len) {
-            var column = serde.deserializeString(columnInfo[columnOffset..]);
+            var column = deserializeBytes(columnInfo[columnOffset..]);
             columnOffset += column.offset;
-            columns.append(column.string) catch return .{
+            columns.append(column.bytes) catch return .{
                 .err = "Could not allocate for column name.",
             };
 
-            var kind = serde.deserializeString(columnInfo[columnOffset..]);
+            var kind = deserializeBytes(columnInfo[columnOffset..]);
             columnOffset += kind.offset;
-            types.append(kind.string) catch return .{
+            types.append(kind.bytes) catch return .{
                 .err = "Could not allocate for column kind.",
             };
         }
@@ -70,8 +171,8 @@ pub const Storage = struct {
 
         var value = std.ArrayList(u8).init(self.allocator);
         for (table.columns) |column, i| {
-            serde.serializeString(&value, column) catch return "Could not allocate for column";
-            serde.serializeString(&value, table.types[i]) catch return "Could not allocate for column type";
+            serializeBytes(&value, column) catch return "Could not allocate for column";
+            serializeBytes(&value, table.types[i]) catch return "Could not allocate for column type";
         }
 
         return self.db.set(key.items, value.items);
@@ -86,39 +187,29 @@ pub const Storage = struct {
         return buf[0..];
     }
 
-    pub fn writeRow(self: Storage, table: serde.String, cells: []serde.String) ?Error {
-        // Table name prefix
-        var key = std.ArrayList(u8).init(self.allocator);
-        key.writer().print("row{s}", .{table}) catch return "Could not allocate row key";
-
-        // Unique row id
-        var id = generateId() catch return "Could not generate id";
-        key.appendSlice(id) catch return "Could not allocate for id";
-
-        var value = std.ArrayList(u8).init(self.allocator);
-        for (cells) |cell| {
-            serde.serializeString(&value, cell) catch return "Could not allocate for cell";
-        }
-
-        return self.db.set(key.items, value.items);
-    }
-
     pub const Row = struct {
-        cells: std.ArrayList(serde.String),
-        fields: []serde.String,
+        allocator: std.mem.Allocator,
+        cells: std.ArrayList([]const u8),
+        fields: [][]const u8,
 
-        pub fn init(allocator: std.mem.Allocator, fields: []serde.String) Row {
+        pub fn init(allocator: std.mem.Allocator, fields: [][]const u8) Row {
             return Row{
-                .cells = std.ArrayList(serde.String).init(allocator),
+                .allocator = allocator,
+                .cells = std.ArrayList([]const u8).init(allocator),
                 .fields = fields,
             };
         }
 
-        pub fn append(self: *Row, cell: serde.String) !void {
+        pub fn append(self: *Row, cell: Value) !void {
+            var cellBuffer = std.ArrayList(u8).init(self.allocator);
+            try self.cells.append(cell.serialize(&cellBuffer));
+        }
+
+        pub fn appendBytes(self: *Row, cell: []const u8) !void {
             try self.cells.append(cell);
         }
 
-        pub fn get(self: Row, field: serde.String) serde.String {
+        pub fn get(self: Row, field: []const u8) []const u8 {
             for (self.fields) |f, i| {
                 if (std.mem.eql(u8, field, f)) {
                     return self.cells.items[i];
@@ -128,7 +219,7 @@ pub const Storage = struct {
             return "";
         }
 
-        pub fn items(self: Row) []serde.String {
+        pub fn items(self: Row) [][]const u8 {
             return self.cells.items;
         }
 
@@ -137,11 +228,28 @@ pub const Storage = struct {
         }
     };
 
+    pub fn writeRow(self: Storage, table: []const u8, row: Row) ?Error {
+        // Table name prefix
+        var key = std.ArrayList(u8).init(self.allocator);
+        key.writer().print("row{s}", .{table}) catch return "Could not allocate row key";
+
+        // Unique row id
+        var id = generateId() catch return "Could not generate id";
+        key.appendSlice(id) catch return "Could not allocate for id";
+
+        var value = std.ArrayList(u8).init(self.allocator);
+        for (row.cells.items) |cell| {
+            serializeBytes(&value, cell) catch return "Could not allocate for cell";
+        }
+
+        return self.db.set(key.items, value.items);
+    }
+
     pub const RowIter = struct {
         row: Row,
         iter: RocksDB.Iter,
 
-        fn init(allocator: std.mem.Allocator, iter: RocksDB.Iter, fields: []serde.String) RowIter {
+        fn init(allocator: std.mem.Allocator, iter: RocksDB.Iter, fields: [][]const u8) RowIter {
             return RowIter{
                 .iter = iter,
                 .row = Row.init(allocator, fields),
@@ -149,7 +257,7 @@ pub const Storage = struct {
         }
 
         pub fn next(self: *RowIter) ?Row {
-            var rowBytes: serde.String = undefined;
+            var rowBytes: []const u8 = undefined;
             if (self.iter.next()) |b| {
                 rowBytes = b.value;
             } else {
@@ -159,9 +267,9 @@ pub const Storage = struct {
             self.row.reset();
             var offset: usize = 0;
             while (offset < rowBytes.len) {
-                var d = serde.deserializeString(rowBytes[offset..]);
+                var d = deserializeBytes(rowBytes[offset..]);
                 offset += d.offset;
-                self.row.append(d.string) catch return null;
+                self.row.appendBytes(d.bytes) catch return null;
             }
 
             return self.row;
@@ -172,7 +280,7 @@ pub const Storage = struct {
         }
     };
 
-    pub fn getRowIter(self: Storage, table: serde.String) Result(RowIter) {
+    pub fn getRowIter(self: Storage, table: []const u8) Result(RowIter) {
         var rowPrefix = std.ArrayList(u8).init(self.allocator);
         rowPrefix.writer().print("row{s}", .{table}) catch return .{
             .err = "Could not allocate for row prefix",
@@ -193,3 +301,59 @@ pub const Storage = struct {
         };
     }
 };
+
+test "serialize/deserialize Value strings" {
+    const expectEqualStrings = std.testing.expectEqualStrings;
+    const Value = Storage.Value;
+
+    var stringTests = [_]struct {
+        value: Value,
+        string: []const u8,
+    }{
+        .{ .value = Value.fromIntegerString("1"), .string = "1" },
+        .{ .value = Value{ .integer_value = 1 }, .string = "1" },
+        .{ .value = Value{ .integer_value = 1003 }, .string = "1003" },
+        .{ .value = Value{ .bool_value = false }, .string = "false" },
+        .{ .value = Value{ .bool_value = true }, .string = "true" },
+    };
+
+    var buf = std.ArrayList(u8).init(std.testing.allocator);
+    defer buf.deinit();
+
+    var buf2 = std.ArrayList(u8).init(std.testing.allocator);
+    defer buf2.deinit();
+
+    for (stringTests) |testCase| {
+        buf.clearRetainingCapacity();
+        var serialized = testCase.value.serialize(&buf);
+
+        buf2.clearRetainingCapacity();
+        try Value.deserialize(serialized).asString(&buf2);
+        try expectEqualStrings(testCase.string, buf2.items);
+    }
+}
+
+test "serialize/deserialize Value integers" {
+    const expectEqual = std.testing.expectEqual;
+    const Value = Storage.Value;
+
+    var integerTests = [_]struct {
+        value: Value,
+        integer: i64,
+    }{
+        .{ .value = Value.fromIntegerString("1"), .integer = 1 },
+        .{ .value = Value{ .integer_value = 1 }, .integer = 1 },
+        .{ .value = Value.FALSE, .integer = 0 },
+        .{ .value = Value.TRUE, .integer = 1 },
+        .{ .value = Value{ .string_value = "1" }, .integer = 1 },
+        .{ .value = Value{ .string_value = "1002" }, .integer = 1002 },
+    };
+
+    var buf = std.ArrayList(u8).init(std.testing.allocator);
+    defer buf.deinit();
+    for (integerTests) |testCase| {
+        buf.clearRetainingCapacity();
+        var serialized = testCase.value.serialize(&buf);
+        try expectEqual(testCase.integer, Value.deserialize(serialized).asInteger());
+    }
+}

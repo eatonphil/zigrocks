@@ -4,7 +4,6 @@ const parse = @import("parse.zig");
 const Result = @import("result.zig").Result;
 const RocksDB = @import("rocksdb.zig").RocksDB;
 const Storage = @import("storage.zig").Storage;
-const serde = @import("serde.zig");
 
 pub const Executor = struct {
     allocator: std.mem.Allocator,
@@ -15,102 +14,24 @@ pub const Executor = struct {
     }
 
     const QueryResponse = struct {
-        fields: []serde.String,
+        fields: [][]const u8,
         // Array of cells (which is an array of serde (which is an array of u8))
-        rows: [][]serde.String,
+        rows: [][][]const u8,
         empty: bool,
     };
     const QueryResponseResult = Result(QueryResponse);
 
-    const Value = union(enum) {
-        bool_value: bool,
-        null_value: bool,
-        string_value: serde.String,
-        integer_value: i64,
-
-        const TRUE = Value{ .bool_value = true };
-        const FALSE = Value{ .bool_value = false };
-        const NULL = Value{ .null_value = true };
-
-        fn fromIntegerString(iBytes: serde.String) Value {
-            const i = std.fmt.parseInt(i64, iBytes, 10) catch return Value{
-                .integer_value = 0,
-            };
-            return Value{ .integer_value = i };
-        }
-
-        fn asBool(self: Value) bool {
-            return switch (self) {
-                .null_value => false,
-                .bool_value => |value| value,
-                .string_value => |value| value.len > 0,
-                .integer_value => |value| value != 0,
-            };
-        }
-
-        fn asString(self: Value, buf: *std.ArrayList(u8)) !void {
-            try switch (self) {
-                .null_value => _ = 1, // Do nothing
-                .bool_value => |value| buf.appendSlice(if (value) "true" else "false"),
-                .string_value => |value| buf.appendSlice(value),
-                .integer_value => |value| buf.writer().print("{d}", .{value}),
-            };
-        }
-
-        fn asInteger(self: Value) i64 {
-            return switch (self) {
-                .null_value => 0,
-                .bool_value => |value| if (value) 1 else 0,
-                .string_value => |value| fromIntegerString(value).integer_value,
-                .integer_value => |value| value,
-            };
-        }
-
-        fn serialize(self: Value, buf: *std.ArrayList(u8)) serde.String {
-            switch (self) {
-                .null_value => buf.append('0') catch return "",
-
-                .bool_value => |value| {
-                    buf.append('1') catch return "";
-                    buf.append(if (value) '1' else '0') catch return "";
-                },
-
-                .string_value => |value| {
-                    buf.append('2') catch return "";
-                    serde.serializeString(buf, value) catch return "";
-                },
-
-                .integer_value => |value| {
-                    buf.append('3') catch return "";
-                    serde.serializeInteger(i64, buf, value) catch return "";
-                },
-            }
-
-            return buf.items;
-        }
-
-        fn deserialize(data: serde.String) Value {
-            return switch (data[0]) {
-                '0' => Value.NULL,
-                '1' => Value{ .bool_value = data[1] == '1' },
-                '2' => Value{ .string_value = serde.deserializeString(data[1..]).string },
-                '3' => Value{ .integer_value = serde.deserializeInteger(i64, data[1..]) },
-                else => unreachable,
-            };
-        }
-    };
-
-    fn executeExpression(self: Executor, e: parse.ExpressionAST, row: Storage.Row) Value {
+    fn executeExpression(self: Executor, e: parse.ExpressionAST, row: Storage.Row) Storage.Value {
         return switch (e) {
             .literal => |lit| switch (lit.kind) {
-                .string => Value{ .string_value = lit.string() },
-                .numeric => Value.fromIntegerString(lit.string()),
+                .string => Storage.Value{ .string_value = lit.string() },
+                .numeric => Storage.Value.fromIntegerString(lit.string()),
                 .identifier => {
                     // Storage.Row's results are internal buffer
                     // views. So make a copy.
                     var copy = std.ArrayList(u8).init(self.allocator);
-                    copy.appendSlice(row.get(lit.string())) catch return Value.NULL;
-                    return Value.deserialize(copy.items);
+                    copy.appendSlice(row.get(lit.string())) catch return Storage.Value.NULL;
+                    return Storage.Value.deserialize(copy.items);
                 },
                 else => unreachable,
             },
@@ -123,14 +44,14 @@ pub const Executor = struct {
                     if (@enumToInt(left) != @enumToInt(right)) {
                         var leftBuf = std.ArrayList(u8).init(self.allocator);
                         left.asString(&leftBuf) catch unreachable;
-                        left = Value{ .string_value = leftBuf.items };
+                        left = Storage.Value{ .string_value = leftBuf.items };
 
                         var rightBuf = std.ArrayList(u8).init(self.allocator);
                         right.asString(&rightBuf) catch unreachable;
-                        right = Value{ .string_value = rightBuf.items };
+                        right = Storage.Value{ .string_value = rightBuf.items };
                     }
 
-                    return Value{
+                    return Storage.Value{
                         .bool_value = switch (left) {
                             .null_value => true,
                             .bool_value => |v| v == right.asBool(),
@@ -152,13 +73,13 @@ pub const Executor = struct {
                     var copy = std.ArrayList(u8).init(self.allocator);
                     left.asString(&copy) catch unreachable;
                     right.asString(&copy) catch unreachable;
-                    return Value{ .string_value = copy.items };
+                    return Storage.Value{ .string_value = copy.items };
                 }
 
                 return switch (bin_op.operator.kind) {
-                    .lt_operator => if (left.asInteger() < right.asInteger()) Value.TRUE else Value.FALSE,
-                    .plus_operator => Value{ .integer_value = left.asInteger() + right.asInteger() },
-                    else => Value.NULL,
+                    .lt_operator => if (left.asInteger() < right.asInteger()) Storage.Value.TRUE else Storage.Value.FALSE,
+                    .plus_operator => Storage.Value{ .integer_value = left.asInteger() + right.asInteger() },
+                    else => Storage.Value.NULL,
                 };
             },
         };
@@ -171,7 +92,7 @@ pub const Executor = struct {
         }
 
         // Now validate and store requested fields
-        var requestedFields = std.ArrayList(serde.String).init(self.allocator);
+        var requestedFields = std.ArrayList([]const u8).init(self.allocator);
         for (s.columns) |requestedColumn| {
             var fieldName = switch (requestedColumn) {
                 .literal => |lit| switch (lit.kind) {
@@ -188,7 +109,7 @@ pub const Executor = struct {
         }
 
         // Prepare response
-        var rows = std.ArrayList([]serde.String).init(self.allocator);
+        var rows = std.ArrayList([][]const u8).init(self.allocator);
         var response = QueryResponse{
             .fields = requestedFields.items,
             .rows = undefined,
@@ -212,7 +133,7 @@ pub const Executor = struct {
             }
 
             if (add) {
-                var requested = std.ArrayList(serde.String).init(self.allocator);
+                var requested = std.ArrayList([]const u8).init(self.allocator);
                 for (s.columns) |exp| {
                     var val = self.executeExpression(exp, row);
                     var valBuf = std.ArrayList(u8).init(self.allocator);
@@ -232,15 +153,14 @@ pub const Executor = struct {
     }
 
     fn executeInsert(self: Executor, i: parse.InsertAST) QueryResponseResult {
-        var cells = std.ArrayList(serde.String).init(self.allocator);
-        var empty = std.ArrayList([]u8).init(self.allocator);
+        var emptyRow = Storage.Row.init(self.allocator, undefined);
+        var row = Storage.Row.init(self.allocator, undefined);
         for (i.values) |v| {
-            var exp = self.executeExpression(v, Storage.Row.init(self.allocator, empty.items));
-            var cellBuffer = std.ArrayList(u8).init(self.allocator);
-            cells.append(exp.serialize(&cellBuffer)) catch return .{ .err = "Could not allocate for cell" };
+            var exp = self.executeExpression(v, emptyRow);
+            row.append(exp) catch return .{ .err = "Could not allocate for cell" };
         }
 
-        if (self.storage.writeRow(i.table.string(), cells.items)) |err| {
+        if (self.storage.writeRow(i.table.string(), row)) |err| {
             return .{ .err = err };
         }
 
@@ -250,8 +170,8 @@ pub const Executor = struct {
     }
 
     fn executeCreateTable(self: Executor, c: parse.CreateTableAST) QueryResponseResult {
-        var columns = std.ArrayList(serde.String).init(self.allocator);
-        var types = std.ArrayList(serde.String).init(self.allocator);
+        var columns = std.ArrayList([]const u8).init(self.allocator);
+        var types = std.ArrayList([]const u8).init(self.allocator);
 
         for (c.columns) |column| {
             columns.append(column.name.string()) catch return .{
@@ -293,52 +213,3 @@ pub const Executor = struct {
         };
     }
 };
-
-test "serialize/deserialize Value strings" {
-    const expectEqualStrings = std.testing.expectEqualStrings;
-    const Value = Executor.Value;
-
-    var stringTests = [_]struct {
-        value: Value,
-        string: serde.String,
-    }{
-        .{ .value = Value.fromIntegerString("1"), .string = "1" },
-        .{ .value = Value{ .integer_value = 1 }, .string = "1" },
-        .{ .value = Value{ .integer_value = 1003 }, .string = "1003" },
-        .{ .value = Value{ .bool_value = false }, .string = "false" },
-        .{ .value = Value{ .bool_value = true }, .string = "true" },
-    };
-
-    var buf = std.ArrayList(u8).init(std.testing.allocator);
-    defer buf.deinit();
-    for (stringTests) |testCase| {
-        buf.clearRetainingCapacity();
-        var serialized = testCase.value.serialize(&buf);
-        try expectEqualStrings(testCase.string, Value.deserialize(serialized).asString());
-    }
-}
-
-test "serialize/deserialize Value integers" {
-    const expectEqual = std.testing.expectEqual;
-    const Value = Executor.Value;
-
-    var integerTests = [_]struct {
-        value: Value,
-        integer: i64,
-    }{
-        .{ .value = Value.fromIntegerString("1"), .integer = 1 },
-        .{ .value = Value{ .integer_value = 1 }, .integer = 1 },
-        .{ .value = Value.FALSE, .integer = 0 },
-        .{ .value = Value.TRUE, .integer = 1 },
-        .{ .value = Value{ .string_value = "1" }, .integer = 1 },
-        .{ .value = Value{ .string_value = "1002" }, .integer = 1002 },
-    };
-
-    var buf = std.ArrayList(u8).init(std.testing.allocator);
-    defer buf.deinit();
-    for (integerTests) |testCase| {
-        buf.clearRetainingCapacity();
-        var serialized = testCase.value.serialize(&buf);
-        try expectEqual(testCase.integer, Value.deserialize(serialized).asInteger());
-    }
-}

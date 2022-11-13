@@ -1,13 +1,12 @@
 const std = @import("std");
 
-const serde = @import("serde.zig");
 const Error = @import("result.zig").Error;
 
 pub const Token = struct {
     start: u64,
     end: u64,
     kind: Kind,
-    source: serde.String,
+    source: []const u8,
 
     pub const Kind = enum {
         select_keyword,
@@ -29,17 +28,13 @@ pub const Token = struct {
         identifier,
         numeric,
         string,
-
-        pub fn jsonStringify(self: Kind, options: std.json.StringifyOptions, out_stream: anytype) !void {
-            std.json.stringify(@tagName(self), options, out_stream);
-        }
     };
 
-    pub fn string(self: Token) serde.String {
+    pub fn string(self: Token) []const u8 {
         return self.source[self.start..self.end];
     }
 
-    fn debug(self: Token, msg: serde.String) void {
+    fn debug(self: Token, msg: []const u8) void {
         var line: usize = 0;
         var column: usize = 0;
         var lineStartIndex: usize = 0;
@@ -79,7 +74,7 @@ pub const Token = struct {
     }
 };
 
-pub fn debug(tokens: []Token, preferredIndex: usize, msg: serde.String) void {
+pub fn debug(tokens: []Token, preferredIndex: usize, msg: []const u8) void {
     var i = preferredIndex;
     while (i >= tokens.len) {
         i = i - 0;
@@ -88,7 +83,7 @@ pub fn debug(tokens: []Token, preferredIndex: usize, msg: serde.String) void {
     tokens[i].debug(msg);
 }
 
-fn eatWhitespace(source: serde.String, index: usize) usize {
+fn eatWhitespace(source: []const u8, index: usize) usize {
     var res = index;
     while (source[res] == ' ' or
         source[res] == '\n' or
@@ -105,7 +100,7 @@ fn eatWhitespace(source: serde.String, index: usize) usize {
 }
 
 const Builtin = struct {
-    name: serde.String,
+    name: []const u8,
     kind: Token.Kind,
 };
 
@@ -130,7 +125,7 @@ var BUILTINS = [_]Builtin{
 //    std.debug.assert(BUILTINS.len == @typeInfo(Token.Kind).Enum.fields.len - 3);
 //}
 
-fn asciiCaseInsensitiveEqual(left: serde.String, right: serde.String) bool {
+fn asciiCaseInsensitiveEqual(left: []const u8, right: []const u8) bool {
     var min = left;
     if (right.len < left.len) {
         min = right;
@@ -155,7 +150,7 @@ fn asciiCaseInsensitiveEqual(left: serde.String, right: serde.String) bool {
     return true;
 }
 
-fn lexKeyword(source: serde.String, index: usize) struct { nextPosition: usize, token: ?Token } {
+fn lexKeyword(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
     var longestLen: usize = 0;
     var kind = Token.Kind.select_keyword;
     for (BUILTINS) |builtin| {
@@ -186,7 +181,7 @@ fn lexKeyword(source: serde.String, index: usize) struct { nextPosition: usize, 
     };
 }
 
-fn lexNumeric(source: serde.String, index: usize) struct { nextPosition: usize, token: ?Token } {
+fn lexNumeric(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
     var start = index;
     var end = index;
     var i = index;
@@ -210,7 +205,7 @@ fn lexNumeric(source: serde.String, index: usize) struct { nextPosition: usize, 
     };
 }
 
-fn lexString(source: serde.String, index: usize) struct { nextPosition: usize, token: ?Token } {
+fn lexString(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
     var i = index;
     if (source[i] != '\'') {
         return .{ .nextPosition = 0, .token = null };
@@ -243,7 +238,7 @@ fn lexString(source: serde.String, index: usize) struct { nextPosition: usize, t
     };
 }
 
-fn lexIdentifier(source: serde.String, index: usize) struct { nextPosition: usize, token: ?Token } {
+fn lexIdentifier(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
     var start = index;
     var end = index;
     var i = index;
@@ -270,7 +265,7 @@ fn lexIdentifier(source: serde.String, index: usize) struct { nextPosition: usiz
     };
 }
 
-pub fn lex(source: serde.String, tokens: *std.ArrayList(Token)) ?Error {
+pub fn lex(source: []const u8, tokens: *std.ArrayList(Token)) ?Error {
     var i: usize = 0;
     while (true) {
         i = eatWhitespace(source, i);
