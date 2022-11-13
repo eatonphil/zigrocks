@@ -1,4 +1,6 @@
-pub const Error = []const u8;
+pub const String = []const u8;
+
+pub const Error = String;
 
 pub fn Result(comptime T: type) type {
     return union(enum) {

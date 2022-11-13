@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const lex = @import("lex.zig");
-const Result = @import("result.zig").Result;
+const Result = @import("types.zig").Result;
 const Token = lex.Token;
 
 pub const BinaryOperationAST = struct {

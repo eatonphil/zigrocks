@@ -1,7 +1,8 @@
 const std = @import("std");
 
 const parse = @import("parse.zig");
-const Result = @import("result.zig").Result;
+const Result = @import("types.zig").Result;
+const String = @import("types.zig").String;
 const RocksDB = @import("rocksdb.zig").RocksDB;
 const Storage = @import("storage.zig").Storage;
 
@@ -14,9 +15,9 @@ pub const Executor = struct {
     }
 
     const QueryResponse = struct {
-        fields: [][]const u8,
+        fields: []String,
         // Array of cells (which is an array of serde (which is an array of u8))
-        rows: [][][]const u8,
+        rows: [][]String,
         empty: bool,
     };
     const QueryResponseResult = Result(QueryResponse);
@@ -92,7 +93,7 @@ pub const Executor = struct {
         }
 
         // Now validate and store requested fields
-        var requestedFields = std.ArrayList([]const u8).init(self.allocator);
+        var requestedFields = std.ArrayList(String).init(self.allocator);
         for (s.columns) |requestedColumn| {
             var fieldName = switch (requestedColumn) {
                 .literal => |lit| switch (lit.kind) {
@@ -109,7 +110,7 @@ pub const Executor = struct {
         }
 
         // Prepare response
-        var rows = std.ArrayList([][]const u8).init(self.allocator);
+        var rows = std.ArrayList([]String).init(self.allocator);
         var response = QueryResponse{
             .fields = requestedFields.items,
             .rows = undefined,
@@ -133,7 +134,7 @@ pub const Executor = struct {
             }
 
             if (add) {
-                var requested = std.ArrayList([]const u8).init(self.allocator);
+                var requested = std.ArrayList(String).init(self.allocator);
                 for (s.columns) |exp| {
                     var val = self.executeExpression(exp, row);
                     var valBuf = std.ArrayList(u8).init(self.allocator);
@@ -170,8 +171,8 @@ pub const Executor = struct {
     }
 
     fn executeCreateTable(self: Executor, c: parse.CreateTableAST) QueryResponseResult {
-        var columns = std.ArrayList([]const u8).init(self.allocator);
-        var types = std.ArrayList([]const u8).init(self.allocator);
+        var columns = std.ArrayList(String).init(self.allocator);
+        var types = std.ArrayList(String).init(self.allocator);
 
         for (c.columns) |column| {
             columns.append(column.name.string()) catch return .{

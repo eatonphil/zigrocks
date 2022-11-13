@@ -1,8 +1,9 @@
 const std = @import("std");
 
 const RocksDB = @import("rocksdb.zig").RocksDB;
-const Result = @import("result.zig").Result;
-const Error = @import("result.zig").Error;
+const Error = @import("types.zig").Error;
+const Result = @import("types.zig").Result;
+const String = @import("types.zig").String;
 
 pub fn serializeInteger(comptime T: type, buf: *std.ArrayList(u8), i: T) !void {
     var length: [@sizeOf(T)]u8 = undefined;
@@ -10,18 +11,18 @@ pub fn serializeInteger(comptime T: type, buf: *std.ArrayList(u8), i: T) !void {
     try buf.appendSlice(length[0..8]);
 }
 
-pub fn deserializeInteger(comptime T: type, buf: []const u8) T {
+pub fn deserializeInteger(comptime T: type, buf: String) T {
     return std.mem.readIntBig(T, buf[0..@sizeOf(T)]);
 }
 
-pub fn serializeBytes(buf: *std.ArrayList(u8), bytes: []const u8) !void {
+pub fn serializeBytes(buf: *std.ArrayList(u8), bytes: String) !void {
     try serializeInteger(u64, buf, bytes.len);
     try buf.appendSlice(bytes);
 }
 
-pub fn deserializeBytes(bytes: []const u8) struct {
+pub fn deserializeBytes(bytes: String) struct {
     offset: usize,
-    bytes: []const u8,
+    bytes: String,
 } {
     var length = deserializeInteger(u64, bytes);
     var offset = length + 8;
@@ -42,14 +43,14 @@ pub const Storage = struct {
     pub const Value = union(enum) {
         bool_value: bool,
         null_value: bool,
-        string_value: []const u8,
+        string_value: String,
         integer_value: i64,
 
         pub const TRUE = Value{ .bool_value = true };
         pub const FALSE = Value{ .bool_value = false };
         pub const NULL = Value{ .null_value = true };
 
-        pub fn fromIntegerString(iBytes: []const u8) Value {
+        pub fn fromIntegerString(iBytes: String) Value {
             const i = std.fmt.parseInt(i64, iBytes, 10) catch return Value{
                 .integer_value = 0,
             };
@@ -83,7 +84,7 @@ pub const Storage = struct {
             };
         }
 
-        pub fn serialize(self: Value, buf: *std.ArrayList(u8)) []const u8 {
+        pub fn serialize(self: Value, buf: *std.ArrayList(u8)) String {
             switch (self) {
                 .null_value => buf.append('0') catch return "",
 
@@ -106,7 +107,7 @@ pub const Storage = struct {
             return buf.items;
         }
 
-        pub fn deserialize(data: []const u8) Value {
+        pub fn deserialize(data: String) Value {
             return switch (data[0]) {
                 '0' => Value.NULL,
                 '1' => Value{ .bool_value = data[1] == '1' },
@@ -118,19 +119,19 @@ pub const Storage = struct {
     };
 
     pub const Table = struct {
-        name: []const u8,
-        columns: [][]const u8,
-        types: [][]const u8,
+        name: String,
+        columns: []String,
+        types: []String,
     };
 
-    pub fn getTable(self: Storage, name: []const u8) Result(Table) {
+    pub fn getTable(self: Storage, name: String) Result(Table) {
         var tableKey = std.ArrayList(u8).init(self.allocator);
         tableKey.writer().print("tbl{s}", .{name}) catch return .{
             .err = "Could not allocate for table prefix",
         };
 
-        var columns = std.ArrayList([]const u8).init(self.allocator);
-        var types = std.ArrayList([]const u8).init(self.allocator);
+        var columns = std.ArrayList(String).init(self.allocator);
+        var types = std.ArrayList(String).init(self.allocator);
         var table = Table{
             .name = name,
             .columns = undefined,
@@ -189,13 +190,13 @@ pub const Storage = struct {
 
     pub const Row = struct {
         allocator: std.mem.Allocator,
-        cells: std.ArrayList([]const u8),
-        fields: [][]const u8,
+        cells: std.ArrayList(String),
+        fields: []String,
 
-        pub fn init(allocator: std.mem.Allocator, fields: [][]const u8) Row {
+        pub fn init(allocator: std.mem.Allocator, fields: []String) Row {
             return Row{
                 .allocator = allocator,
-                .cells = std.ArrayList([]const u8).init(allocator),
+                .cells = std.ArrayList(String).init(allocator),
                 .fields = fields,
             };
         }
@@ -205,11 +206,11 @@ pub const Storage = struct {
             try self.cells.append(cell.serialize(&cellBuffer));
         }
 
-        pub fn appendBytes(self: *Row, cell: []const u8) !void {
+        pub fn appendBytes(self: *Row, cell: String) !void {
             try self.cells.append(cell);
         }
 
-        pub fn get(self: Row, field: []const u8) []const u8 {
+        pub fn get(self: Row, field: String) String {
             for (self.fields) |f, i| {
                 if (std.mem.eql(u8, field, f)) {
                     return self.cells.items[i];
@@ -219,7 +220,7 @@ pub const Storage = struct {
             return "";
         }
 
-        pub fn items(self: Row) [][]const u8 {
+        pub fn items(self: Row) []String {
             return self.cells.items;
         }
 
@@ -228,7 +229,7 @@ pub const Storage = struct {
         }
     };
 
-    pub fn writeRow(self: Storage, table: []const u8, row: Row) ?Error {
+    pub fn writeRow(self: Storage, table: String, row: Row) ?Error {
         // Table name prefix
         var key = std.ArrayList(u8).init(self.allocator);
         key.writer().print("row{s}", .{table}) catch return "Could not allocate row key";
@@ -249,7 +250,7 @@ pub const Storage = struct {
         row: Row,
         iter: RocksDB.Iter,
 
-        fn init(allocator: std.mem.Allocator, iter: RocksDB.Iter, fields: [][]const u8) RowIter {
+        fn init(allocator: std.mem.Allocator, iter: RocksDB.Iter, fields: []String) RowIter {
             return RowIter{
                 .iter = iter,
                 .row = Row.init(allocator, fields),
@@ -257,7 +258,7 @@ pub const Storage = struct {
         }
 
         pub fn next(self: *RowIter) ?Row {
-            var rowBytes: []const u8 = undefined;
+            var rowBytes: String = undefined;
             if (self.iter.next()) |b| {
                 rowBytes = b.value;
             } else {
@@ -280,7 +281,7 @@ pub const Storage = struct {
         }
     };
 
-    pub fn getRowIter(self: Storage, table: []const u8) Result(RowIter) {
+    pub fn getRowIter(self: Storage, table: String) Result(RowIter) {
         var rowPrefix = std.ArrayList(u8).init(self.allocator);
         rowPrefix.writer().print("row{s}", .{table}) catch return .{
             .err = "Could not allocate for row prefix",
@@ -308,7 +309,7 @@ test "serialize/deserialize Value strings" {
 
     var stringTests = [_]struct {
         value: Value,
-        string: []const u8,
+        string: String,
     }{
         .{ .value = Value.fromIntegerString("1"), .string = "1" },
         .{ .value = Value{ .integer_value = 1 }, .string = "1" },
