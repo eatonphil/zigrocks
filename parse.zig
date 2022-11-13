@@ -141,7 +141,11 @@ pub const Parser = struct {
             return .{ .err = "No expression" };
         }
 
-        if (expectTokenKind(tokens, i, Token.Kind.equal_operator)) {
+        if (expectTokenKind(tokens, i, Token.Kind.equal_operator) or
+            expectTokenKind(tokens, i, Token.Kind.lt_operator) or
+            expectTokenKind(tokens, i, Token.Kind.plus_operator) or
+            expectTokenKind(tokens, i, Token.Kind.concat_operator))
+        {
             var newE = ExpressionAST{
                 .binary_operation = BinaryOperationAST{
                     .operator = tokens.items[i],

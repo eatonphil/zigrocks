@@ -16,7 +16,10 @@ pub const Token = struct {
         from_keyword,
         where_keyword,
 
+        plus_operator,
         equal_operator,
+        lt_operator,
+        concat_operator,
 
         left_paren_syntax,
         right_paren_syntax,
@@ -113,7 +116,10 @@ var BUILTINS = [_]Builtin{
     .{ .name = "VALUES", .kind = Token.Kind.values_keyword },
     .{ .name = "WHERE", .kind = Token.Kind.where_keyword },
     .{ .name = "FROM", .kind = Token.Kind.from_keyword },
+    .{ .name = "||", .kind = Token.Kind.concat_operator },
     .{ .name = "=", .kind = Token.Kind.equal_operator },
+    .{ .name = "+", .kind = Token.Kind.plus_operator },
+    .{ .name = "<", .kind = Token.Kind.lt_operator },
     .{ .name = "(", .kind = Token.Kind.left_paren_syntax },
     .{ .name = ")", .kind = Token.Kind.right_paren_syntax },
     .{ .name = ",", .kind = Token.Kind.comma_syntax },

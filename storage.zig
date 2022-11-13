@@ -4,7 +4,7 @@ const RocksDB = @import("rocksdb.zig").RocksDB;
 const Result = @import("result.zig").Result;
 const Error = @import("result.zig").Error;
 
-fn serializeString(writer: std.ArrayList(u8).Writer, string: []const u8) void {
+pub fn serializeString(writer: std.ArrayList(u8).Writer, string: []const u8) void {
     var length: [8]u8 = undefined;
     std.mem.writeIntBig(u64, &length, string.len);
     var n = writer.write(length[0..8]) catch unreachable;
@@ -13,7 +13,7 @@ fn serializeString(writer: std.ArrayList(u8).Writer, string: []const u8) void {
     std.debug.assert(n == string.len);
 }
 
-fn deserializeString(string: []const u8) struct {
+pub fn deserializeString(string: []const u8) struct {
     offset: usize,
     string: []const u8,
 } {
