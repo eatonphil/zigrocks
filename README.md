@@ -31,13 +31,7 @@ echo "SELECT name, age, year FROM y"
 + ====          +===            +====           +
 | Mel           |18             |1994           |
 | Gary          |38             |2010           |
-| Gary          |38             |2010           |
-| Mel           |18             |1994           |
 | Teej          |92             |2021           |
-| Teej          |92             |2021           |
-| Gary          |38             |2010           |
-| Teej          |92             |2021           |
-| Mel           |18             |1994           |
 
 # With WHERE
 $ ./main --database data --script <(echo "SELECT name, year, age FROM y WHERE age < 40")
@@ -46,10 +40,6 @@ echo "SELECT name, year, age FROM y WHERE age < 40"
 + ====          +====           +===            +
 | Mel           |1994           |18             |
 | Gary          |2010           |38             |
-| Gary          |2010           |38             |
-| Mel           |1994           |18             |
-| Gary          |2010           |38             |
-| Mel           |1994           |18             |
 
 # With operations
 $ ./main --database data --script <(echo "SELECT 'Name: ' || name, year + 30, age FROM y WHERE age < 40")
@@ -58,10 +48,6 @@ echo "SELECT 'Name: ' || name, year + 30, age FROM y WHERE age < 40"
 + =======               +=======                +===            +
 | Name: Mel             |2024           |18             |
 | Name: Gary            |2040           |38             |
-| Name: Gary            |2040           |38             |
-| Name: Mel             |2024           |18             |
-| Name: Gary            |2040           |38             |
-| Name: Mel             |2024           |18             |
 ```
 
 References:
