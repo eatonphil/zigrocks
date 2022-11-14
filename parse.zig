@@ -2,115 +2,8 @@ const std = @import("std");
 
 const lex = @import("lex.zig");
 const Result = @import("types.zig").Result;
+
 const Token = lex.Token;
-
-pub const BinaryOperationAST = struct {
-    operator: Token,
-    left: *ExpressionAST,
-    right: *ExpressionAST,
-
-    fn print(self: BinaryOperationAST) void {
-        self.left.print();
-        std.debug.print(" {s} ", .{self.operator.string()});
-        self.right.print();
-    }
-};
-
-pub const ExpressionAST = union(enum) {
-    literal: Token,
-    binary_operation: BinaryOperationAST,
-
-    fn print(self: ExpressionAST) void {
-        switch (self) {
-            .literal => |literal| switch (literal.kind) {
-                .string => std.debug.print("'{s}'", .{literal.string()}),
-                else => std.debug.print("{s}", .{literal.string()}),
-            },
-            .binary_operation => self.binary_operation.print(),
-        }
-    }
-};
-
-pub const SelectAST = struct {
-    columns: []ExpressionAST,
-    from: Token,
-    where: ?ExpressionAST,
-
-    fn print(self: SelectAST) void {
-        std.debug.print("SELECT\n", .{});
-        for (self.columns) |column, i| {
-            std.debug.print("  ", .{});
-            column.print();
-            if (i < self.columns.len - 1) {
-                std.debug.print(",", .{});
-            }
-            std.debug.print("\n", .{});
-        }
-        std.debug.print("FROM\n  {s}", .{self.from.string()});
-
-        if (self.where) |where| {
-            std.debug.print("\nWHERE\n  ", .{});
-            where.print();
-        }
-
-        std.debug.print("\n", .{});
-    }
-};
-
-pub const InsertAST = struct {
-    table: Token,
-    values: []ExpressionAST,
-
-    fn print(self: InsertAST) void {
-        std.debug.print("INSERT INTO {s} VALUES (", .{self.table.string()});
-        for (self.values) |value, i| {
-            value.print();
-            if (i < self.values.len - 1) {
-                std.debug.print(", ", .{});
-            }
-        }
-        std.debug.print(")\n", .{});
-    }
-};
-
-const CreateTableColumnAST = struct {
-    name: Token,
-    kind: Token,
-};
-
-pub const CreateTableAST = struct {
-    table: Token,
-    columns: []CreateTableColumnAST,
-
-    fn print(self: CreateTableAST) void {
-        std.debug.print("CREATE TABLE {s} (\n", .{self.table.string()});
-        for (self.columns) |column, i| {
-            std.debug.print(
-                "  {s} {s}",
-                .{ column.name.string(), column.kind.string() },
-            );
-            if (i < self.columns.len - 1) {
-                std.debug.print(",", .{});
-            }
-            std.debug.print("\n", .{});
-        }
-        std.debug.print(")\n", .{});
-    }
-};
-
-pub const AST = union(enum) {
-    select: SelectAST,
-    insert: InsertAST,
-    create_table: CreateTableAST,
-
-    pub fn print(self: AST) void {
-        switch (self) {
-            .select => |select| select.print(),
-            .insert => |insert| insert.print(),
-            .create_table => |create_table| create_table.print(),
-        }
-    }
-};
 
 pub const Parser = struct {
     allocator: std.mem.Allocator,
@@ -127,6 +20,33 @@ pub const Parser = struct {
         return tokens[index].kind == kind;
     }
 
+    pub const BinaryOperationAST = struct {
+        operator: Token,
+        left: *ExpressionAST,
+        right: *ExpressionAST,
+
+        fn print(self: BinaryOperationAST) void {
+            self.left.print();
+            std.debug.print(" {s} ", .{self.operator.string()});
+            self.right.print();
+        }
+    };
+
+    pub const ExpressionAST = union(enum) {
+        literal: Token,
+        binary_operation: BinaryOperationAST,
+
+        fn print(self: ExpressionAST) void {
+            switch (self) {
+                .literal => |literal| switch (literal.kind) {
+                    .string => std.debug.print("'{s}'", .{literal.string()}),
+                    else => std.debug.print("{s}", .{literal.string()}),
+                },
+                .binary_operation => self.binary_operation.print(),
+            }
+        }
+    };
+
     fn parseExpression(self: Parser, tokens: []Token, index: usize) Result(struct {
         ast: ExpressionAST,
         nextPosition: usize,
@@ -135,7 +55,7 @@ pub const Parser = struct {
 
         var e: ExpressionAST = undefined;
 
-        if (expectTokenKind(tokens, i, Token.Kind.numeric) or
+        if (expectTokenKind(tokens, i, Token.Kind.integer) or
             expectTokenKind(tokens, i, Token.Kind.identifier) or
             expectTokenKind(tokens, i, Token.Kind.string))
         {
@@ -175,6 +95,32 @@ pub const Parser = struct {
 
         return .{ .val = .{ .ast = e, .nextPosition = i } };
     }
+
+    pub const SelectAST = struct {
+        columns: []ExpressionAST,
+        from: Token,
+        where: ?ExpressionAST,
+
+        fn print(self: SelectAST) void {
+            std.debug.print("SELECT\n", .{});
+            for (self.columns) |column, i| {
+                std.debug.print("  ", .{});
+                column.print();
+                if (i < self.columns.len - 1) {
+                    std.debug.print(",", .{});
+                }
+                std.debug.print("\n", .{});
+            }
+            std.debug.print("FROM\n  {s}", .{self.from.string()});
+
+            if (self.where) |where| {
+                std.debug.print("\nWHERE\n  ", .{});
+                where.print();
+            }
+
+            std.debug.print("\n", .{});
+        }
+    };
 
     fn parseSelect(self: Parser, tokens: []Token) Result(AST) {
         var i: usize = 0;
@@ -246,6 +192,31 @@ pub const Parser = struct {
         return .{ .val = AST{ .select = select } };
     }
 
+    const CreateTableColumnAST = struct {
+        name: Token,
+        kind: Token,
+    };
+
+    pub const CreateTableAST = struct {
+        table: Token,
+        columns: []CreateTableColumnAST,
+
+        fn print(self: CreateTableAST) void {
+            std.debug.print("CREATE TABLE {s} (\n", .{self.table.string()});
+            for (self.columns) |column, i| {
+                std.debug.print(
+                    "  {s} {s}",
+                    .{ column.name.string(), column.kind.string() },
+                );
+                if (i < self.columns.len - 1) {
+                    std.debug.print(",", .{});
+                }
+                std.debug.print("\n", .{});
+            }
+            std.debug.print(")\n", .{});
+        }
+    };
+
     fn parseCreateTable(self: Parser, tokens: []Token) Result(AST) {
         var i: usize = 0;
         if (!expectTokenKind(tokens, i, Token.Kind.create_table_keyword)) {
@@ -315,6 +286,22 @@ pub const Parser = struct {
         return .{ .val = AST{ .create_table = create_table } };
     }
 
+    pub const InsertAST = struct {
+        table: Token,
+        values: []ExpressionAST,
+
+        fn print(self: InsertAST) void {
+            std.debug.print("INSERT INTO {s} VALUES (", .{self.table.string()});
+            for (self.values) |value, i| {
+                value.print();
+                if (i < self.values.len - 1) {
+                    std.debug.print(", ", .{});
+                }
+            }
+            std.debug.print(")\n", .{});
+        }
+    };
+
     fn parseInsert(self: Parser, tokens: []Token) Result(AST) {
         var i: usize = 0;
         if (!expectTokenKind(tokens, i, Token.Kind.insert_keyword)) {
@@ -378,6 +365,20 @@ pub const Parser = struct {
         insert.values = values.items;
         return .{ .val = AST{ .insert = insert } };
     }
+
+    pub const AST = union(enum) {
+        select: SelectAST,
+        insert: InsertAST,
+        create_table: CreateTableAST,
+
+        pub fn print(self: AST) void {
+            switch (self) {
+                .select => |select| select.print(),
+                .insert => |insert| insert.print(),
+                .create_table => |create_table| create_table.print(),
+            }
+        }
+    };
 
     pub fn parse(self: Parser, tokens: []Token) Result(AST) {
         if (expectTokenKind(tokens, 0, Token.Kind.select_keyword)) {

@@ -27,7 +27,7 @@ pub const Token = struct {
         comma_syntax,
 
         identifier,
-        numeric,
+        integer,
         string,
     };
 
@@ -178,7 +178,7 @@ fn lexKeyword(source: String, index: usize) struct { nextPosition: usize, token:
     };
 }
 
-fn lexNumeric(source: String, index: usize) struct { nextPosition: usize, token: ?Token } {
+fn lexInteger(source: String, index: usize) struct { nextPosition: usize, token: ?Token } {
     var start = index;
     var end = index;
     var i = index;
@@ -197,7 +197,7 @@ fn lexNumeric(source: String, index: usize) struct { nextPosition: usize, token:
             .source = source,
             .start = start,
             .end = end,
-            .kind = Token.Kind.numeric,
+            .kind = Token.Kind.integer,
         },
     };
 }

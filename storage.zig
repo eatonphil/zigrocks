@@ -95,7 +95,7 @@ pub const Storage = struct {
 
                 .string_value => |value| {
                     buf.append('2') catch return "";
-                    serializeBytes(buf, value) catch return "";
+                    buf.appendSlice(value) catch return "";
                 },
 
                 .integer_value => |value| {
@@ -111,7 +111,7 @@ pub const Storage = struct {
             return switch (data[0]) {
                 '0' => Value.NULL,
                 '1' => Value{ .bool_value = data[1] == '1' },
-                '2' => Value{ .string_value = deserializeBytes(data[1..]).bytes },
+                '2' => Value{ .string_value = data[1..] },
                 '3' => Value{ .integer_value = deserializeInteger(i64, data[1..]) },
                 else => unreachable,
             };

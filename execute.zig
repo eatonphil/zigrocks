@@ -1,10 +1,10 @@
 const std = @import("std");
 
-const parse = @import("parse.zig");
-const Result = @import("types.zig").Result;
-const String = @import("types.zig").String;
+const Parser = @import("parse.zig").Parser;
 const RocksDB = @import("rocksdb.zig").RocksDB;
 const Storage = @import("storage.zig").Storage;
+const Result = @import("types.zig").Result;
+const String = @import("types.zig").String;
 
 pub const Executor = struct {
     allocator: std.mem.Allocator,
@@ -22,11 +22,11 @@ pub const Executor = struct {
     };
     const QueryResponseResult = Result(QueryResponse);
 
-    fn executeExpression(self: Executor, e: parse.ExpressionAST, row: Storage.Row) Storage.Value {
+    fn executeExpression(self: Executor, e: ParserExpressionAST, row: Storage.Row) Storage.Value {
         return switch (e) {
             .literal => |lit| switch (lit.kind) {
                 .string => Storage.Value{ .string_value = lit.string() },
-                .numeric => Storage.Value.fromIntegerString(lit.string()),
+                .integer => Storage.Value.fromIntegerString(lit.string()),
                 .identifier => {
                     // Storage.Row's results are internal buffer
                     // views. So make a copy.
@@ -86,7 +86,7 @@ pub const Executor = struct {
         };
     }
 
-    fn executeSelect(self: Executor, s: parse.SelectAST) QueryResponseResult {
+    fn executeSelect(self: Executor, s: ParserSelectAST) QueryResponseResult {
         switch (self.storage.getTable(s.from.string())) {
             .err => |err| return .{ .err = err },
             else => _ = 1,
@@ -153,7 +153,7 @@ pub const Executor = struct {
         return .{ .val = response };
     }
 
-    fn executeInsert(self: Executor, i: parse.InsertAST) QueryResponseResult {
+    fn executeInsert(self: Executor, i: ParserInsertAST) QueryResponseResult {
         var emptyRow = Storage.Row.init(self.allocator, undefined);
         var row = Storage.Row.init(self.allocator, undefined);
         for (i.values) |v| {
@@ -170,7 +170,7 @@ pub const Executor = struct {
         };
     }
 
-    fn executeCreateTable(self: Executor, c: parse.CreateTableAST) QueryResponseResult {
+    fn executeCreateTable(self: Executor, c: ParserCreateTableAST) QueryResponseResult {
         var columns = std.ArrayList(String).init(self.allocator);
         var types = std.ArrayList(String).init(self.allocator);
 
@@ -197,7 +197,7 @@ pub const Executor = struct {
         };
     }
 
-    pub fn execute(self: Executor, ast: parse.AST) QueryResponseResult {
+    pub fn execute(self: Executor, ast: ParserAST) QueryResponseResult {
         return switch (ast) {
             .select => |select| switch (self.executeSelect(select)) {
                 .val => |val| .{ .val = val },
