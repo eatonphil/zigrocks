@@ -1,5 +1,8 @@
 # zigrocks: a basic SQL database in Zig, with storage via RocksDB
 
+See [Writing a SQL database, take two: Zig and
+RocksDB](https://notes.eatonphil.com/zigrocks-sql.html) for a walkthrough!
+
 Build:
 
 ```bash
