@@ -118,15 +118,6 @@ pub const Storage = struct {
         }
     };
 
-    fn generateId() ![]u8 {
-        const file = try std.fs.cwd().openFileZ("/dev/random", .{});
-        defer file.close();
-
-        var buf: [16]u8 = .{};
-        _ = try file.read(&buf);
-        return buf[0..];
-    }
-
     pub const Row = struct {
         allocator: std.mem.Allocator,
         cells: std.ArrayList(String),
@@ -170,6 +161,15 @@ pub const Storage = struct {
             self.cells.clearRetainingCapacity();
         }
     };
+
+    fn generateId() ![]u8 {
+        const file = try std.fs.cwd().openFileZ("/dev/random", .{});
+        defer file.close();
+
+        var buf: [16]u8 = .{};
+        _ = try file.read(&buf);
+        return buf[0..];
+    }
 
     pub fn writeRow(self: Storage, table: String, row: Row) ?Error {
         // Table name prefix
