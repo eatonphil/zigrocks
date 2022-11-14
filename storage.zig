@@ -118,67 +118,6 @@ pub const Storage = struct {
         }
     };
 
-    pub const Table = struct {
-        name: String,
-        columns: []String,
-        types: []String,
-    };
-
-    pub fn getTable(self: Storage, name: String) Result(Table) {
-        var tableKey = std.ArrayList(u8).init(self.allocator);
-        tableKey.writer().print("tbl{s}", .{name}) catch return .{
-            .err = "Could not allocate for table prefix",
-        };
-
-        var columns = std.ArrayList(String).init(self.allocator);
-        var types = std.ArrayList(String).init(self.allocator);
-        var table = Table{
-            .name = name,
-            .columns = undefined,
-            .types = undefined,
-        };
-        // First grab table info
-        var columnInfo = switch (self.db.get(tableKey.items)) {
-            .err => |err| return .{ .err = err },
-            .val => |val| val,
-            .not_found => return .{ .err = "No such table" },
-        };
-
-        var columnOffset: usize = 0;
-        while (columnOffset < columnInfo.len) {
-            var column = deserializeBytes(columnInfo[columnOffset..]);
-            columnOffset += column.offset;
-            columns.append(column.bytes) catch return .{
-                .err = "Could not allocate for column name.",
-            };
-
-            var kind = deserializeBytes(columnInfo[columnOffset..]);
-            columnOffset += kind.offset;
-            types.append(kind.bytes) catch return .{
-                .err = "Could not allocate for column kind.",
-            };
-        }
-
-        table.columns = columns.items;
-        table.types = types.items;
-
-        return .{ .val = table };
-    }
-
-    pub fn writeTable(self: Storage, table: Table) ?Error {
-        // Table name prefix
-        var key = std.ArrayList(u8).init(self.allocator);
-        key.writer().print("tbl{s}", .{table.name}) catch return "Could not allocate key for table";
-
-        var value = std.ArrayList(u8).init(self.allocator);
-        for (table.columns) |column, i| {
-            serializeBytes(&value, column) catch return "Could not allocate for column";
-            serializeBytes(&value, table.types[i]) catch return "Could not allocate for column type";
-        }
-
-        return self.db.set(key.items, value.items);
-    }
-
     fn generateId() ![]u8 {
         const file = try std.fs.cwd().openFileZ("/dev/random", .{});
         defer file.close();
@@ -210,14 +149,17 @@ pub const Storage = struct {
             try self.cells.append(cell);
         }
 
-        pub fn get(self: Row, field: String) String {
+        pub fn get(self: Row, field: String) Value {
             for (self.fields) |f, i| {
                 if (std.mem.eql(u8, field, f)) {
-                    return self.cells.items[i];
+                    // Results are internal buffer views. So make a copy.
+                    var copy = std.ArrayList(u8).init(self.allocator);
+                    copy.appendSlice(self.cells.items[i]) catch return Storage.Value.NULL;
+                    return Storage.Value.deserialize(copy.items);
                 }
             }
 
-            return "";
+            return Value.NULL;
         }
 
         pub fn items(self: Row) []String {
@@ -300,6 +242,67 @@ pub const Storage = struct {
         return .{
             .val = RowIter.init(self.allocator, iter, tableInfo.columns),
         };
+    }
+
+    pub const Table = struct {
+        name: String,
+        columns: []String,
+        types: []String,
+    };
+
+    pub fn getTable(self: Storage, name: String) Result(Table) {
+        var tableKey = std.ArrayList(u8).init(self.allocator);
+        tableKey.writer().print("tbl{s}", .{name}) catch return .{
+            .err = "Could not allocate for table prefix",
+        };
+
+        var columns = std.ArrayList(String).init(self.allocator);
+        var types = std.ArrayList(String).init(self.allocator);
+        var table = Table{
+            .name = name,
+            .columns = undefined,
+            .types = undefined,
+        };
+        // First grab table info
+        var columnInfo = switch (self.db.get(tableKey.items)) {
+            .err => |err| return .{ .err = err },
+            .val => |val| val,
+            .not_found => return .{ .err = "No such table" },
+        };
+
+        var columnOffset: usize = 0;
+        while (columnOffset < columnInfo.len) {
+            var column = deserializeBytes(columnInfo[columnOffset..]);
+            columnOffset += column.offset;
+            columns.append(column.bytes) catch return .{
+                .err = "Could not allocate for column name.",
+            };
+
+            var kind = deserializeBytes(columnInfo[columnOffset..]);
+            columnOffset += kind.offset;
+            types.append(kind.bytes) catch return .{
+                .err = "Could not allocate for column kind.",
+            };
+        }
+
+        table.columns = columns.items;
+        table.types = types.items;
+
+        return .{ .val = table };
+    }
+
+    pub fn writeTable(self: Storage, table: Table) ?Error {
+        // Table name prefix
+        var key = std.ArrayList(u8).init(self.allocator);
+        key.writer().print("tbl{s}", .{table.name}) catch return "Could not allocate key for table";
+
+        var value = std.ArrayList(u8).init(self.allocator);
+        for (table.columns) |column, i| {
+            serializeBytes(&value, column) catch return "Could not allocate for column";
+            serializeBytes(&value, table.types[i]) catch return "Could not allocate for column type";
+        }
+
+        return self.db.set(key.items, value.items);
     }
 };
 

@@ -277,10 +277,10 @@ pub fn lex(source: String, tokens: *std.ArrayList(Token)) ?Error {
             continue;
         }
 
-        const numericRes = lexNumeric(source, i);
-        if (numericRes.token) |token| {
-            tokens.append(token) catch return "Failed to allocate space for numeric token";
-            i = numericRes.nextPosition;
+        const integerRes = lexInteger(source, i);
+        if (integerRes.token) |token| {
+            tokens.append(token) catch return "Failed to allocate space for integer token";
+            i = integerRes.nextPosition;
             continue;
         }
 
