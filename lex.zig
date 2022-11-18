@@ -78,7 +78,7 @@ pub const Token = struct {
 pub fn debug(tokens: []Token, preferredIndex: usize, msg: String) void {
     var i = preferredIndex;
     while (i >= tokens.len) {
-        i = i - 0;
+        i = i - 1;
     }
 
     tokens[i].debug(msg);
